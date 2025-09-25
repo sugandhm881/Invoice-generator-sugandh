@@ -32,5 +32,60 @@
         "cgst": 720.0,
         "sgst": 720.0,
         "grand_total": 9440.0
+    },
+    {
+        "bill_no": "INV/0039/25-26",
+        "invoice_date": "25-Sep-2025",
+        "client_name": "Guthi Enterprises",
+        "client_address1": "Vasant Vihar",
+        "client_address2": "Delhi - 110062",
+        "client_gstin": "07AXMPS8810K1ZN",
+        "my_gstin": "09ENEPM4809Q1Z8",
+        "particulars": "Towards Charges for Annual Accounting and Book keeping services for the Financial Year 2024-25 including Ledger maintenance, Bank Reconciliations, and Financial reporting.",
+        "amount": 50000.0,
+        "amounts": null,
+        "sub_total": 50000.0,
+        "igst": 9000.0,
+        "cgst": 0.0,
+        "sgst": 0.0,
+        "grand_total": 59000.0
+    },
+    {
+        "bill_no": "INV/0040/25-26",
+        "invoice_date": "26-Sep-2025",
+        "client_name": "Guthi Enterprises",
+        "client_address1": "Vasant Vihar",
+        "client_address2": "Delhi - 110062",
+        "client_gstin": "07AXMPS8810K1ZN",
+        "my_gstin": "09ENEPM4809Q1Z8",
+        "particulars": "Towards Charges for Annual Accounting and Book keeping services for the Financial Year 2024-25 including Ledger maintenance, Bank Reconciliations, and Financial reporting.",
+        "amount": 50000.0,
+        "amounts": [
+            50000
+        ],
+        "sub_total": 50000.0,
+        "igst": 9000.0,
+        "cgst": 0.0,
+        "sgst": 0.0,
+        "grand_total": 59000.0
+    },
+    {
+        "bill_no": "MB-2025-26/013",
+        "invoice_date": "31-Aug-2025",
+        "client_name": "Avkash Mishra",
+        "client_address1": "SUDAMAPURI VIJAYNAGA",
+        "client_address2": "Ghaziabad",
+        "client_gstin": "09ENEPM4809Q1Z8",
+        "my_gstin": "09ENEPM4809Q1Z8",
+        "particulars": "Towards Charges for Annual Accounting and Book keeping services for the Financial Year 2024-25 including Ledger maintenance, Bank Reconciliations, and Financial reporting.",
+        "amount": 50000.0,
+        "amounts": [
+            50000
+        ],
+        "sub_total": 50000.0,
+        "igst": 0.0,
+        "cgst": 4500.0,
+        "sgst": 4500.0,
+        "grand_total": 59000.0
     }
 ]

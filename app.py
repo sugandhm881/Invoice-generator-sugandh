@@ -1,9 +1,10 @@
 # app.py
+
 import os
 import io
 import json
 import logging
-from datetime import date
+from datetime import date, datetime
 from urllib.parse import unquote
 
 from flask import Flask, request, send_file, jsonify, render_template, redirect, url_for
@@ -127,7 +128,7 @@ def generate_pdf(invoice_data):
 
     # Header
     if os.path.exists(os.path.join(BASE_DIR, "static", "mb-logo.png")):
-        pdf.image(os.path.join(BASE_DIR, "static", "mb-logo.png"), x=15, y=8, w=30)  # Adjust width if needed
+        pdf.image(os.path.join(BASE_DIR, "static", "mb-logo.png"), x=15, y=8, w=30)
     pdf.set_font("Calibri", "B", 22)
     pdf.set_text_color(255, 165, 0)  # Orange
     pdf.cell(page_width, 10, "MB COLLECTION", ln=True, align='C')
@@ -144,10 +145,7 @@ def generate_pdf(invoice_data):
     pdf.set_font("Calibri", "B", 12)
     pdf.cell(0, 5, "Bill To:", ln=True)
     pdf.set_font("Calibri", "", 10)
-    pdf.cell(0, 5, invoice_data['client_name'], ln=True)
-    pdf.cell(0, 5, invoice_data['client_address1'], ln=True)
-    pdf.cell(0, 5, invoice_data['client_address2'], ln=True)
-    pdf.cell(0, 5, f"GSTIN: {invoice_data['client_gstin']}", ln=True)
+    pdf.multi_cell(0, 5, f"{invoice_data['client_name']}\n{invoice_data['client_address1']}\n{invoice_data['client_address2']}\nGSTIN: {invoice_data['client_gstin']}")
     pdf.set_xy(140, 65)
     pdf.set_font("Calibri", "B", 10)
     pdf.cell(0, 5, f"Invoice No: {invoice_data['bill_no']}", ln=True)
@@ -164,19 +162,50 @@ def generate_pdf(invoice_data):
 
     # Table rows
     pdf.set_font("Calibri", "", 10)
-    particulars = invoice_data['particulars'].split('\n')
+    particulars = [p.strip() for p in invoice_data['particulars'].split('\n') if p.strip()]
     hsn_list = ["998222"] * len(particulars)
-    amounts = [invoice_data['amount'] / len(particulars)] * len(particulars)  # evenly split if needed
+    
+    amounts = invoice_data.get('amounts')
+    if not amounts or len(amounts) != len(particulars):
+        total_amount = invoice_data.get('amount', 0)
+        amounts = [total_amount / len(particulars)] * len(particulars) if particulars else []
 
+    line_height = 7 # A consistent height for text lines
     for i in range(len(particulars)):
         if i % 2 == 0:
-            pdf.set_fill_color(255, 255, 204)  # Light yellow
+            pdf.set_fill_color(255, 255, 204)
         else:
-            pdf.set_fill_color(255, 255, 230)  # Slightly different yellow
-        pdf.cell(130, 7, particulars[i], border=1, fill=True)
-        pdf.cell(30, 7, hsn_list[i], border=1, align='C', fill=True)
-        pdf.cell(30, 7, f"{amounts[i]:.2f}", border=1, align='R', fill=True)
-        pdf.ln()
+            pdf.set_fill_color(255, 255, 230)
+            
+        # --- FIX START: Correct Vertical Alignment for All Cells ---
+        start_x = pdf.get_x()
+        start_y = pdf.get_y()
+        
+        # Draw particulars text (invisibly) to calculate the required row height
+        # This is a common FPDF workaround
+        pdf.multi_cell(130, line_height, particulars[i], border=0, align='L', fill=False)
+        final_y = pdf.get_y()
+        row_height = final_y - start_y
+        
+        # Go back to the starting position to draw the actual cells with borders and fill
+        pdf.set_xy(start_x, start_y)
+        pdf.cell(130, row_height, "", border=1, fill=True)
+        pdf.cell(30, row_height, "", border=1, fill=True)
+        pdf.cell(30, row_height, "", border=1, fill=True)
+        
+        # Go back again to draw the text on top of the colored boxes, ensuring top alignment
+        pdf.set_xy(start_x, start_y)
+        pdf.multi_cell(130, line_height, particulars[i], align='L', fill=False)
+        
+        pdf.set_xy(start_x + 130, start_y)
+        pdf.multi_cell(30, line_height, hsn_list[i], align='C', fill=False)
+        
+        pdf.set_xy(start_x + 130 + 30, start_y)
+        pdf.multi_cell(30, line_height, f"{amounts[i]:.2f}", align='R', fill=False)
+        
+        # Move the cursor to the correct position for the next row
+        pdf.set_y(final_y)
+        # --- FIX END ---
 
     # Totals
     pdf.set_font("Calibri", "B", 10)
@@ -259,36 +288,81 @@ def handle_invoice():
         client_gstin = data.get('client_gstin','').strip()
         particulars = data.get('particulars', [])
         if isinstance(particulars, list):
-            particulars = ', '.join([str(p).strip() for p in particulars])
+            particulars = '\n'.join([str(p).strip() for p in particulars])
         else:
-            particulars = str(particulars).strip()    
+            particulars = str(particulars).strip()  
+
         amounts = data.get("amounts")
-        if amounts and isinstance(amounts,list): amount = float(sum([float(x) for x in amounts]))
-        else: amount = float(data.get("amount",0))
+        if amounts and isinstance(amounts,list): 
+            amount = float(sum([float(x) for x in amounts if x is not None]))
+        else: 
+            amount = float(data.get("amount",0))
+
         # Save client
         clients = load_clients()
         if client_name and client_name not in clients:
             clients[client_name] = {"address1":client_address1,"address2":client_address2,"gstin":client_gstin}
             save_clients(clients)
-        # Invoice counter
-        counter_data = load_json(INVOICE_COUNTER_FILE, {"counter":0})
-        counter = counter_data.get("counter",0)+1
-        counter_data['counter']=counter
-        save_json(counter_data, INVOICE_COUNTER_FILE)
-        bill_no = f"INV/{counter:04d}/25-26"
-        invoice_date_str = date.today().strftime('%d-%b-%Y')
+
+        # Determine auto or manual invoice number/date
+        auto_generate = data.get("auto_generate", True)
+        if auto_generate:
+            counter_data = load_json(INVOICE_COUNTER_FILE, {"counter":0})
+            counter = counter_data.get("counter",0)+1
+            counter_data['counter']=counter
+            save_json(counter_data, INVOICE_COUNTER_FILE)
+            bill_no = f"INV/{counter:04d}/25-26"
+            invoice_date_str = date.today().strftime('%d-%b-%Y')
+        else:
+            bill_no = str(data.get("manual_bill_no","")).strip() or f"INV/XXXX/25-26"
+            manual_date = str(data.get("manual_invoice_date","")).strip()
+            if manual_date:
+                # Convert YYYY-MM-DD from input[type=date] to DD-Mon-YYYY
+                invoice_date_str = datetime.strptime(manual_date, '%Y-%m-%d').strftime('%d-%b-%Y')
+            else:
+                invoice_date_str = date.today().strftime('%d-%b-%Y')
+
         my_gstin = "09ENEPM4809Q1Z8"
-        sub_total = round(amount,2); igst=cgst=sgst=0.0
-        if client_gstin and client_gstin[:2]==my_gstin[:2]: cgst=round(sub_total*0.09,2); sgst=round(sub_total*0.09,2)
-        else: igst=round(sub_total*0.18,2)
+        sub_total = round(amount,2)
+        igst=cgst=sgst=0.0
+        if client_gstin and client_gstin[:2]==my_gstin[:2]: 
+            cgst=round(sub_total*0.09,2); sgst=round(sub_total*0.09,2)
+        else: 
+            igst=round(sub_total*0.18,2)
         grand_total = round(sub_total+igst+cgst+sgst,2)
-        invoice_data = {"bill_no":bill_no,"invoice_date":invoice_date_str,"client_name":client_name,"client_address1":client_address1,"client_address2":client_address2,"client_gstin":client_gstin,"my_gstin":my_gstin,"particulars":particulars,"amount":sub_total,"amounts":amounts if isinstance(amounts,list) else None,"sub_total":sub_total,"igst":igst,"cgst":cgst,"sgst":sgst,"grand_total":grand_total}
-        invoices = load_invoices(); invoices.append(invoice_data); save_invoices(invoices)
+
+        invoice_data = {
+            "bill_no":bill_no,
+            "invoice_date":invoice_date_str,
+            "client_name":client_name,
+            "client_address1":client_address1,
+            "client_address2":client_address2,
+            "client_gstin":client_gstin,
+            "my_gstin":my_gstin,
+            "particulars":particulars,
+            "amount":sub_total,
+            "amounts":amounts if isinstance(amounts,list) else None,
+            "sub_total":sub_total,
+            "igst":igst,
+            "cgst":cgst,
+            "sgst":sgst,
+            "grand_total":grand_total
+        }
+
+        invoices = load_invoices()
+        invoices.append(invoice_data)
+        save_invoices(invoices)
+
         pdf_file = generate_pdf(invoice_data)
         download_name = f"Invoice_{bill_no.replace('/','_')}.pdf"
+        
+        # Save the file to the generated_invoices folder
         path = os.path.join(INVOICE_PDF_FOLDER, download_name)
-        with open(path,"wb") as f: f.write(pdf_file.getbuffer()); pdf_file.seek(0)
-        return send_file(pdf_file,mimetype="application/pdf",as_attachment=True,download_name=download_name)
+        with open(path,"wb") as f: 
+            f.write(pdf_file.getbuffer())
+        pdf_file.seek(0) # Reset buffer position after writing
+            
+        return send_file(pdf_file, mimetype="application/pdf", as_attachment=True, download_name=download_name)
     except Exception as e:
         logging.error(f"Error generating invoice: {e}", exc_info=True)
         return jsonify({"error":str(e)}),500

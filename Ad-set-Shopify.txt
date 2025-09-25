@@ -1,0 +1,153 @@
+import fetch from "node-fetch";
+import dotenv from "dotenv";
+import querystring from "querystring";
+
+dotenv.config();
+
+const SHOPIFY_URL = `https://${process.env.SHOPIFY_SHOP_URL}/admin/api/2025-07/orders.json`;
+const SHOPIFY_TOKEN = process.env.SHOPIFY_TOKEN;
+const FB_ACCOUNT_ID = process.env.FACEBOOK_AD_ACCOUNT_ID;
+const FB_TOKEN = process.env.FACEBOOK_ACCESS_TOKEN;
+
+// --- Fetch all Shopify orders ---
+async function fetchAllShopifyOrders() {
+  let orders = [];
+  let url = `${SHOPIFY_URL}?status=any&limit=250`;
+  while (url) {
+    const res = await fetch(url, {
+      headers: { "X-Shopify-Access-Token": SHOPIFY_TOKEN },
+    });
+    const data = await res.json();
+    orders = orders.concat(data.orders || []);
+
+    const linkHeader = res.headers.get("link");
+    if (linkHeader && linkHeader.includes('rel="next"')) {
+      const match = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
+      url = match ? match[1] : null;
+    } else {
+      url = null;
+    }
+  }
+  return orders;
+}
+
+// --- Fetch all Facebook adsets ---
+async function fetchAllFacebookAdsets() {
+  let insights = [];
+  let url = `https://graph.facebook.com/v16.0/${FB_ACCOUNT_ID}/insights?level=adset&date_preset=last_90d&fields=campaign_name,adset_name,spend,clicks&access_token=${FB_TOKEN}&limit=5000`;
+
+  while (url) {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.error) {
+      console.error("Facebook API Error:", data.error);
+      break;
+    }
+    insights = insights.concat(data.data || []);
+    url = data.paging?.next || null;
+  }
+
+  return insights.map(i => ({
+    adset_name: i.adset_name.toLowerCase(),
+    campaign_name: i.campaign_name.toLowerCase(),
+    spend: parseFloat(i.spend) || 0,
+    clicks: parseInt(i.clicks) || 0,
+  }));
+}
+
+// --- Extract UTM parameters from URL ---
+function parseUTM(url) {
+  if (!url) return {};
+  const qIndex = url.indexOf("?");
+  if (qIndex === -1) return {};
+  return querystring.parse(url.substring(qIndex + 1));
+}
+
+// --- Clean string for matching ---
+function cleanString(str) {
+  return str ? str.toLowerCase().replace(/\s|_|–|-/g, "") : "";
+}
+
+// --- Match order to adset ---
+function matchOrderToAdset(order, fbAdsets) {
+  const logs = {};
+
+  const tags = Array.isArray(order.tags) ? order.tags.join(",") : order.tags || "";
+  const noteAttrs = Array.isArray(order.note_attributes)
+    ? order.note_attributes.map(n => `${n.name}:${n.value}`).join(",")
+    : "";
+  const utms = parseUTM(order.landing_site);
+  const searchFields = [
+    tags,
+    noteAttrs,
+    utms.utm_term,
+    utms.utm_campaign,
+    utms.utm_source,
+    order.source_name,
+  ].filter(Boolean);
+
+  logs.tags = tags;
+  logs.note_attributes = noteAttrs;
+  logs.landing_site = order.landing_site;
+  logs.utm_term = utms.utm_term || "";
+  logs.utm_campaign = utms.utm_campaign || "";
+  logs.utm_source = utms.utm_source || "";
+  logs.source_name = order.source_name;
+
+  // --- Try exact matching first ---
+  for (const ad of fbAdsets) {
+    for (const field of searchFields) {
+      if (cleanString(field).includes(cleanString(ad.adset_name)) ||
+          cleanString(field).includes(cleanString(ad.campaign_name))) {
+        return { adset: ad.adset_name, logs };
+      }
+    }
+  }
+
+  // --- Try UTM-term parsing for patterns like SASerum_PP_Madhavi_1309_amazon ---
+  const utmFields = [utms.utm_term, utms.utm_campaign].filter(Boolean).map(cleanString);
+  for (const ad of fbAdsets) {
+    for (const utmField of utmFields) {
+      const adName = cleanString(ad.adset_name);
+      if (utmField.includes(adName)) {
+        return { adset: ad.adset_name, logs };
+      }
+    }
+  }
+
+  return { adset: "unknown", logs };
+}
+
+// --- Main ---
+(async () => {
+  console.log("Fetching Shopify orders...");
+  const orders = await fetchAllShopifyOrders();
+
+  console.log("Fetching Facebook adsets...");
+  const fbAdsets = await fetchAllFacebookAdsets();
+
+  let adsetCounts = {};
+  let unknownCount = 0;
+
+  for (const order of orders) {
+    const { adset, logs } = matchOrderToAdset(order, fbAdsets);
+    if (!adsetCounts[adset]) adsetCounts[adset] = 0;
+    adsetCounts[adset]++;
+
+    if (adset === "unknown") unknownCount++;
+
+    // Optional: log first 5 unknowns to debug
+    if (adset === "unknown" && unknownCount <= 5) {
+      console.log(`Order ${order.id} mapped to unknown`);
+      console.log("Debug fields:", logs);
+    }
+  }
+
+  console.log(`\nTotal orders: ${orders.length}`);
+  console.log(`Mapped to unknown: ${unknownCount} (${((unknownCount / orders.length) * 100).toFixed(2)}%)\n`);
+
+  console.log("--- Adset-wise bifurcation ---");
+  for (const [key, value] of Object.entries(adsetCounts).sort((a, b) => b[1] - a[1])) {
+    console.log(`${key}: ${value} (${((value / orders.length) * 100).toFixed(2)}%)`);
+  }
+})();

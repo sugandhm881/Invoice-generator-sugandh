@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raw Invoice Data</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 font-sans p-6">
+    <div class="max-w-5xl mx-auto bg-white shadow-lg rounded-lg p-6">
+        <div class="flex justify-between items-center mb-4">
+            <h1 class="text-2xl font-bold">Raw Invoice Data (invoices.json)</h1>
+            <a href="/download-invoices-data" class="bg-blue-500 text-white px-4 py-2 rounded font-semibold hover:bg-blue-600">
+                Download JSON File
+            </a>
+        </div>
+        <hr class="my-4">
+        
+        <pre class="bg-gray-800 text-white text-sm p-4 rounded-md overflow-x-auto"><code>{{ data | tojson(indent=4) }}</code></pre>
+        
+        <a href="{{ url_for('home') }}" class="mt-6 inline-block text-blue-600 hover:underline">&larr; Back to Invoice Generator</a>
+    </div>
+</body>
+</html>

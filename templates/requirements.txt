@@ -2,4 +2,5 @@ Flask==2.3.3
 flask-login==0.6.3
 python-dotenv==1.0.0
 fpdf==1.7.2
+firebase-admin
 gunicorn==21.2.0

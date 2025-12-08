@@ -1,22 +1,23 @@
 {
-    "Sugandh Mishra": {
-        "address1": "Mahathwar",
-        "address2": "Darbhanga, Bihar - 847427",
-        "gstin": "10DJTPM9189R1AC"
+    "Test": {
+        "address1": "Test",
+        "address2": "Test 2 -847427",
+        "gstin": "10DJTPM9189R1BM",
+        "email": "sugandh@gmail.com",
+        "mobile": "7289804108"
     },
-    "Avkash Mishra": {
-        "address1": "SUDAMAPURI VIJAYNAGA",
-        "address2": "Ghaziabad",
-        "gstin": "09ENEPM4809Q1Z8"
-    },
-    "Guthi Enterprises": {
-        "address1": "Vasant Vihar",
-        "address2": "Delhi - 110062",
-        "gstin": "07AXMPS8810K1ZN"
+    "Fledge Healthtech Private Limited": {
+        "address1": "1st Floor Building No./Flat No .: 2733, 16th Cross Road,",
+        "address2": "27th Main Road Nearby, Bengaluru Karnataka 560102",
+        "gstin": "29AAFCF3943H1ZG",
+        "email": "dk@fledgehealth.com",
+        "mobile": "9716661106"
     },
     "SM Tech": {
         "address1": "Mahathwar",
-        "address2": "Darbhanga",
-        "gstin": "07DJTPM9189R1SC"
+        "address2": "Darbhanga, Bihar - 847427",
+        "gstin": "",
+        "email": "sugandhm@gmail.com",
+        "mobile": "8010299842"
     }
 }

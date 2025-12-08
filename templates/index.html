@@ -3,299 +3,479 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MB COLLECTION - Invoice Generator</title>
+<title>THE ELEMENT - Invoice Generator</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<style>
+    /* Custom style for the datalist dropdown arrow to look consistent */
+    input::-webkit-calendar-picker-indicator {
+        opacity: 100;
+    }
+</style>
 </head>
-
 <body class="bg-gray-100 font-sans p-6">
-<div class="max-w-5xl mx-auto bg-white shadow-lg rounded-lg p-6">
 
-    <div class="flex justify-between items-center mb-6">
-        <img src="/static/mb-logo.png" alt="Logo" class="h-12">
-        <h1 class="text-3xl font-bold text-center flex-1">MB COLLECTION - Invoice Generator</h1>
-        <a href="{{ url_for('logout') }}" class="ml-4 px-3 py-2 bg-red-500 text-white rounded hover:bg-red-600">
-            Logout
-        </a>
+<div class="max-w-6xl mx-auto bg-white shadow-xl rounded-lg p-6">
+
+    <div class="flex justify-between items-center mb-6 border-b pb-4">
+        <img src="/static/logo.png" alt="Logo" class="h-16 object-contain">
+        
+        <div class="text-center flex-1 px-4">
+            <h1 class="text-3xl font-bold text-gray-800">THE ELEMENT</h1>
+            <p class="text-sm text-gray-500 tracking-widest">INVOICE & BILLING SYSTEM</p>
+        </div>
+
+        <div class="flex flex-col items-end space-y-2">
+            <a href="/download-report" class="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded shadow hover:bg-green-700 flex items-center transition">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                Sales Report (Excel)
+            </a>
+            <a href="{{ url_for('logout') }}" class="text-red-500 text-sm hover:underline hover:text-red-700">
+                Logout
+            </a>
+        </div>
     </div>
 
-    <div class="mb-6">
-        <h2 class="text-xl font-semibold mb-2">Client Details</h2>
-        <select id="clientSelect" class="border rounded px-3 py-2 w-full mb-3">
-            <option value="">Select Existing Client</option>
-        </select>
-        <input type="text" id="client_name" placeholder="Client Name" class="border rounded px-3 py-2 w-full mb-2">
-        <input type="text" id="client_address1" placeholder="Address Line 1" class="border rounded px-3 py-2 w-full mb-2">
-        <input type="text" id="client_address2" placeholder="Address Line 2" class="border rounded px-3 py-2 w-full mb-2">
-        <input type="text" id="client_gstin" placeholder="GSTIN" class="border rounded px-3 py-2 w-full">
-    </div>
-
-    <div class="mb-6">
-        <h2 class="text-xl font-semibold mb-2">Invoice Items</h2>
-        <table class="w-full border-collapse mb-2" id="itemsTable">
-            <thead>
-            <tr class="bg-gray-200">
-                <th class="border px-2 py-1 text-left">Particulars</th>
-                <th class="border px-2 py-1 text-left w-24">HSN</th>
-                <th class="border px-2 py-1 text-left w-32">Amount</th>
-                <th class="border px-2 py-1 text-center w-20">Action</th>
-            </tr>
-            </thead>
-            <tbody id="itemsBody">
-            <tr>
-                <td>
-                    <textarea rows="1" class="border px-2 py-1 w-full particularsInput" placeholder="Enter Particulars..."></textarea>
-                </td>
-                <td><input type="text" value="998222" class="border px-2 py-1 w-full hsn"></td>
-                <td><input type="number" class="border px-2 py-1 w-full amount" value="0"></td>
-                <td class="text-center"><button type="button" onclick="removeRow(this)" class="text-red-500">Delete</button></td>
-            </tr>
-            </tbody>
-        </table>
-        <button type="button" onclick="addRow()" class="bg-blue-500 text-white px-3 py-1 rounded">Add Item</button>
-    </div>
-    
-    <div class="mb-6">
-        <h2 class="text-xl font-semibold mb-2">Invoice Details</h2>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+    <div class="mb-6 bg-yellow-50 p-4 rounded-lg border border-yellow-200 flex items-center justify-between">
+        <label class="flex items-center space-x-3 cursor-pointer select-none">
+            <input type="checkbox" id="is_non_gst" class="form-checkbox h-5 w-5 text-orange-600 rounded focus:ring-orange-500">
             <div>
-                <label for="generation_type" class="block text-sm font-medium text-gray-700">Generation Type</label>
-                <select id="generation_type" class="mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm">
-                    <option value="auto" selected>Auto-generate Number & Use Today's Date</option>
-                    <option value="manual">Enter Manually</option>
-                </select>
+                <span class="text-gray-900 font-bold">Non-GST Bill (Bill of Supply)</span>
+                <p class="text-xs text-gray-500">Enable this if you are not charging tax. (Tax will be 0%)</p>
             </div>
-            <div id="manual_details" class="hidden grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                    <label for="manual_bill_no" class="block text-sm font-medium text-gray-700">Manual Invoice No.</label>
-                    <input type="text" id="manual_bill_no" placeholder="e.g., INV/0123/24-25" class="mt-1 border rounded px-3 py-2 w-full">
-                </div>
-                <div>
-                    <label for="manual_invoice_date" class="block text-sm font-medium text-gray-700">Manual Date</label>
-                    <input type="date" id="manual_invoice_date" class="mt-1 border rounded px-3 py-2 w-full">
+        </label>
+        <div class="text-right">
+            <label class="text-xs text-gray-500 font-bold uppercase block">Generation Type</label>
+            <select id="generation_type" class="mt-1 text-sm border-gray-300 rounded shadow-sm focus:border-orange-500 focus:ring focus:ring-orange-200 focus:ring-opacity-50">
+                <option value="auto" selected>Auto-generate Number</option>
+                <option value="manual">Enter Manually</option>
+            </select>
+        </div>
+    </div>
+
+    <div id="manual_details" class="hidden mb-6 bg-gray-50 p-4 rounded border grid grid-cols-2 gap-4">
+        <div>
+            <label class="block text-sm font-medium text-gray-700">Manual Invoice No.</label>
+            <input type="text" id="manual_bill_no" placeholder="e.g., INV/0123/24-25" class="mt-1 border rounded px-3 py-2 w-full">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700">Manual Date</label>
+            <input type="date" id="manual_invoice_date" class="mt-1 border rounded px-3 py-2 w-full">
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-6">
+        <div>
+            <h2 class="text-lg font-bold text-gray-700 mb-3 border-b pb-1">Bill To (Client)</h2>
+            <select id="clientSelect" class="border rounded px-3 py-2 w-full mb-3 bg-white focus:ring-2 focus:ring-orange-200">
+                <option value="">Select Existing Client</option>
+            </select>
+            <div class="space-y-2">
+                <input type="text" id="client_name" placeholder="Client Name" class="border rounded px-3 py-2 w-full">
+                <input type="text" id="client_mobile" placeholder="Mobile Number" class="border rounded px-3 py-2 w-full">
+                <input type="text" id="client_address1" placeholder="Address Line 1" class="border rounded px-3 py-2 w-full">
+                <input type="text" id="client_address2" placeholder="Address Line 2" class="border rounded px-3 py-2 w-full">
+                <div class="grid grid-cols-2 gap-2">
+                    <input type="text" id="client_gstin" placeholder="GSTIN (e.g. 06...)" class="border rounded px-3 py-2 w-full uppercase">
+                    <input type="email" id="client_email" placeholder="Email Address" class="border rounded px-3 py-2 w-full">
                 </div>
             </div>
         </div>
-    </div>
-    <div class="mb-6 text-right">
-        <p>Sub Total: ₹ <span id="subTotal">0.00</span></p>
-        <p>IGST @18%: ₹ <span id="igst">0.00</span></p>
-        <p>CGST @9%: ₹ <span id="cgst">0.00</span></p>
-        <p>SGST @9%: ₹ <span id="sgst">0.00</span></p>
-        <p class="font-bold text-lg">Grand Total: ₹ <span id="grandTotal">0.00</span></p>
+
+        <div class="bg-gray-50 p-4 rounded-lg">
+            <div class="flex justify-between items-center mb-3 border-b pb-1 border-gray-300">
+                <h2 class="text-lg font-bold text-gray-700">Ship To</h2>
+                <button type="button" onclick="copyBillToToShipTo()" class="text-xs bg-white border border-gray-300 text-gray-700 px-2 py-1 rounded hover:bg-gray-100">Same as Bill To</button>
+            </div>
+            <div class="space-y-2">
+                <input type="text" id="shipto_name" placeholder="Name" class="border rounded px-3 py-2 w-full">
+                <input type="text" id="shipto_mobile" placeholder="Mobile" class="border rounded px-3 py-2 w-full">
+                <input type="text" id="shipto_address1" placeholder="Address Line 1" class="border rounded px-3 py-2 w-full">
+                <input type="text" id="shipto_address2" placeholder="Address Line 2" class="border rounded px-3 py-2 w-full">
+                <div class="grid grid-cols-2 gap-2">
+                    <input type="text" id="shipto_gstin" placeholder="GSTIN" class="border rounded px-3 py-2 w-full bg-gray-100" readonly>
+                    <input type="email" id="shipto_email" placeholder="Email" class="border rounded px-3 py-2 w-full">
+                </div>
+            </div>
+            <div class="mt-4">
+                 <label class="text-xs font-bold text-gray-500 uppercase">PO Number</label>
+                 <input type="text" id="po_number" placeholder="Enter PO Number if applicable" class="border rounded px-3 py-2 w-full">
+            </div>
+        </div>
     </div>
 
-    <div class="text-center mb-6">
-        <button id="generateBtn" class="bg-green-500 text-white px-6 py-2 rounded font-semibold hover:bg-green-600">Generate Invoice PDF</button>
+    <datalist id="particulars_list"></datalist>
+
+    <div class="mb-6 overflow-x-auto">
+        <h2 class="text-lg font-bold text-gray-700 mb-2">Invoice Items</h2>
+        <table class="w-full border-collapse mb-2 min-w-[800px]">
+            <thead>
+            <tr class="bg-gray-800 text-white text-sm">
+                <th class="border border-gray-700 px-3 py-2 text-left">Particulars / Item Name</th>
+                <th class="border border-gray-700 px-3 py-2 text-left w-20">HSN</th>
+                <th class="border border-gray-700 px-3 py-2 text-center w-20">Qty</th>
+                <th class="border border-gray-700 px-3 py-2 text-right w-32">Rate (Incl. Tax)</th>
+                <th class="border border-gray-700 px-3 py-2 text-center w-24">Tax %</th>
+                <th class="border border-gray-700 px-3 py-2 text-right w-32">Total</th>
+                <th class="border border-gray-700 px-3 py-2 text-center w-16"></th>
+            </tr>
+            </thead>
+            <tbody id="itemsBody">
+            <tr class="bg-white hover:bg-gray-50 transition">
+                <td class="p-1 border">
+                    <input type="text" list="particulars_list" class="w-full p-2 outline-none particularsInput font-medium" placeholder="Search or Type..." oninput="handleParticularInput(this)">
+                </td>
+                <td class="p-1 border"><input type="text" value="998222" class="w-full p-2 outline-none text-center hsn text-sm text-gray-600"></td>
+                <td class="p-1 border"><input type="number" class="w-full p-2 outline-none text-center qty font-bold" value="1" min="1"></td>
+                <td class="p-1 border"><input type="number" class="w-full p-2 outline-none text-right rate" value="0" min="0"></td>
+                <td class="p-1 border">
+                  <select class="w-full p-2 outline-none bg-white taxrate">
+                    <option value="18">18%</option>
+                    <option value="12">12%</option>
+                    <option value="5">5%</option>
+                    <option value="0">0%</option>
+                  </select>
+                </td>
+                <td class="p-1 border bg-gray-50"><input type="number" class="w-full p-2 outline-none text-right bg-transparent amount font-bold text-gray-700" value="0" readonly></td>
+                <td class="p-1 border text-center"><button type="button" onclick="removeRow(this)" class="text-red-400 hover:text-red-600 font-bold px-2">×</button></td>
+            </tr>
+            </tbody>
+        </table>
+        <button type="button" onclick="addRow()" class="mt-2 bg-blue-100 text-blue-700 px-4 py-2 rounded hover:bg-blue-200 font-semibold text-sm flex items-center">
+            <span class="mr-1 text-lg">+</span> Add New Item
+        </button>
+    </div>
+    
+    <div class="flex justify-end mb-8">
+        <div class="w-full md:w-1/2 lg:w-1/3 bg-gray-50 p-4 rounded shadow-sm border">
+            <div class="flex justify-between mb-2 text-sm">
+                <span class="text-gray-600">Taxable Amount:</span>
+                <span class="font-medium">₹ <span id="subTotal">0.00</span></span>
+            </div>
+            <div id="taxBreakdown" class="text-xs text-gray-500 mb-2 border-b pb-2">
+                <div class="flex justify-between">
+                    <span>IGST:</span>
+                    <span>₹ <span id="igst">0.00</span></span>
+                </div>
+                <div class="flex justify-between">
+                    <span>CGST:</span>
+                    <span>₹ <span id="cgst">0.00</span></span>
+                </div>
+                <div class="flex justify-between">
+                    <span>SGST:</span>
+                    <span>₹ <span id="sgst">0.00</span></span>
+                </div>
+            </div>
+            <div class="flex justify-between items-center text-xl font-bold text-gray-800 mt-2">
+                <span>Grand Total:</span>
+                <span>₹ <span id="grandTotal">0.00</span></span>
+            </div>
+        </div>
     </div>
 
-    <div class="mb-6">
-        <h2 class="text-xl font-semibold mb-2">Download Previous Invoices</h2>
-        <select id="oldInvoices" class="border rounded px-3 py-2 w-full mb-2"></select>
-        <button onclick="downloadInvoice()" class="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600">Download Selected Invoice</button>
+    <div class="text-center mb-10">
+        <button id="generateBtn" class="bg-gradient-to-r from-orange-500 to-red-500 text-white px-10 py-4 rounded-full font-bold text-lg hover:from-orange-600 hover:to-red-600 shadow-lg transform hover:-translate-y-1 transition duration-200 flex items-center justify-center mx-auto">
+            <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+            Generate Invoice PDF
+        </button>
+    </div>
+
+    <div class="border-t pt-6 bg-gray-50 -mx-6 px-6 pb-2 rounded-b-lg">
+        <h3 class="text-sm font-bold text-gray-500 uppercase mb-3">Recent History</h3>
+        <div class="flex flex-col md:flex-row gap-3">
+            <select id="oldInvoices" class="border rounded px-3 py-2 flex-1 bg-white text-sm" onchange="checkCreditNoteStatus()"></select>
+            
+            <button id="btnDownloadInvoice" onclick="downloadInvoice()" class="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 text-sm font-medium">
+                Download Invoice
+            </button>
+
+            <button id="btnGenerateCN" onclick="generateCreditNote()" class="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 text-sm font-medium">
+                Generate Credit Note
+            </button>
+
+            <button id="btnDownloadCN" onclick="downloadExistingCN()" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm font-medium hidden">
+                Download Credit Note
+            </button>
+        </div>
     </div>
 </div>
 
 <script>
-// Client loading
+let particularsData = {}; 
+let invoiceListCache = []; // Store full data to check flags
+
+// --- INIT ---
 async function loadClients() {
-    const res = await fetch('/clients');
-    const data = await res.json();
-    const select = document.getElementById('clientSelect');
-    select.innerHTML = '<option value="">Select Existing Client</option>';
-    for (const name in data) {
-        const opt = document.createElement('option');
-        opt.value = name;
-        opt.textContent = name;
-        select.appendChild(opt);
+    try {
+        const res = await fetch('/clients');
+        const data = await res.json();
+        const select = document.getElementById('clientSelect');
+        select.innerHTML = '<option value="">Select Existing Client</option>';
+        for (const name in data) {
+            const opt = document.createElement('option');
+            opt.value = name; opt.textContent = name;
+            select.appendChild(opt);
+        }
+    } catch(e) { console.error("Error loading clients", e); }
+}
+
+async function loadParticulars() {
+    try {
+        const res = await fetch('/particulars');
+        particularsData = await res.json();
+        const datalist = document.getElementById('particulars_list');
+        datalist.innerHTML = '';
+        for (const name in particularsData) {
+            const opt = document.createElement('option');
+            opt.value = name; datalist.appendChild(opt);
+        }
+    } catch(e) { console.error("Error loading particulars", e); }
+}
+
+// --- AUTO FILL ---
+function handleParticularInput(input) {
+    const val = input.value.trim(); if (!val) return;
+    const isNonGST = document.getElementById('is_non_gst').checked;
+    const row = input.closest('tr');
+    
+    // Check keys
+    const nonGstKey = val + "_NONGST";
+    const standardKey = val;
+    let foundData = null;
+
+    if (isNonGST) {
+        if (particularsData[nonGstKey]) foundData = particularsData[nonGstKey];
+        else if (particularsData[standardKey]) foundData = particularsData[standardKey];
+    } else {
+        if (particularsData[standardKey]) foundData = particularsData[standardKey];
+    }
+
+    if (foundData) {
+        if(foundData.rate !== undefined) row.querySelector('.rate').value = foundData.rate;
+        if(isNonGST) row.querySelector('.hsn').value = ""; 
+        else if(foundData.hsn) row.querySelector('.hsn').value = foundData.hsn;
+        if(!isNonGST && foundData.taxrate !== undefined) row.querySelector('.taxrate').value = foundData.taxrate; 
+        calculateRowAmount.call(row.querySelector('.qty'));
     }
 }
 
 document.getElementById('clientSelect').addEventListener('change', function() {
-    const name = this.value;
-    if (!name) {
-        // Clear fields if no client is selected
-        document.getElementById('client_name').value = '';
-        document.getElementById('client_address1').value = '';
-        document.getElementById('client_address2').value = '';
-        document.getElementById('client_gstin').value = '';
+    const name = this.value; if (!name) return; 
+    fetch('/clients').then(res => res.json()).then(data => {
+        const c = data[name];
+        document.getElementById('client_name').value = name;
+        document.getElementById('client_address1').value = c.address1 || '';
+        document.getElementById('client_address2').value = c.address2 || '';
+        document.getElementById('client_gstin').value = c.gstin || '';
+        document.getElementById('client_email').value = c.email || '';
+        document.getElementById('client_mobile').value = c.mobile || '';
+        document.getElementById('shipto_gstin').value = c.gstin || '';
         calculateTotals();
-        return;
-    };
-    fetch('/clients')
-        .then(res => res.json())
-        .then(data => {
-            const client = data[name];
-            document.getElementById('client_name').value = name;
-            document.getElementById('client_address1').value = client.address1;
-            document.getElementById('client_address2').value = client.address2;
-            document.getElementById('client_gstin').value = client.gstin;
-            calculateTotals();
-        });
+    });
 });
 
-// Add/remove rows
+function copyBillToToShipTo() {
+    ['name','address1','address2','gstin','email','mobile'].forEach(field => {
+        document.getElementById('shipto_'+field).value = document.getElementById('client_'+field).value;
+    });
+}
+
+// --- ROW ---
 function addRow() {
     const tbody = document.getElementById('itemsBody');
     const row = document.createElement('tr');
+    row.className = "bg-white hover:bg-gray-50 transition";
     row.innerHTML = `
-        <td>
-            <textarea rows="1" class="border px-2 py-1 w-full particularsInput" placeholder="Enter Particulars..."></textarea>
-        </td>
-        <td><input type="text" value="998222" class="border px-2 py-1 w-full hsn"></td>
-        <td><input type="number" class="border px-2 py-1 w-full amount" value="0"></td>
-        <td class="text-center"><button type="button" onclick="removeRow(this)" class="text-red-500">Delete</button></td>
+        <td class="p-1 border"><input type="text" list="particulars_list" class="w-full p-2 outline-none particularsInput font-medium" placeholder="Search..." oninput="handleParticularInput(this)"></td>
+        <td class="p-1 border"><input type="text" value="998222" class="w-full p-2 outline-none text-center hsn text-sm text-gray-600"></td>
+        <td class="p-1 border"><input type="number" class="w-full p-2 outline-none text-center qty font-bold" value="1" min="1"></td>
+        <td class="p-1 border"><input type="number" class="w-full p-2 outline-none text-right rate" value="0" min="0"></td>
+        <td class="p-1 border"><select class="w-full p-2 outline-none bg-white taxrate"><option value="18">18%</option><option value="12">12%</option><option value="5">5%</option><option value="0">0%</option></select></td>
+        <td class="p-1 border bg-gray-50"><input type="number" class="w-full p-2 outline-none text-right bg-transparent amount font-bold text-gray-700" value="0" readonly></td>
+        <td class="p-1 border text-center"><button type="button" onclick="removeRow(this)" class="text-red-400 hover:text-red-600 font-bold px-2">×</button></td>
     `;
     tbody.appendChild(row);
-    // Add event listener to new amount field
+    attachRowListeners(row);
+}
+function removeRow(btn) { btn.closest('tr').remove(); calculateTotals(); }
+function attachRowListeners(row) {
+    row.querySelector('.qty').addEventListener('input', calculateRowAmount);
+    row.querySelector('.rate').addEventListener('input', calculateRowAmount);
+    row.querySelector('.taxrate').addEventListener('change', calculateTotals);
     row.querySelector('.amount').addEventListener('input', calculateTotals);
 }
-
-function removeRow(btn) {
-    btn.closest('tr').remove();
+attachRowListeners(document.querySelector('#itemsBody tr'));
+function calculateRowAmount() {
+    const row = this.closest('tr');
+    row.querySelector('.amount').value = (parseFloat(row.querySelector('.qty').value||0) * parseFloat(row.querySelector('.rate').value||0)).toFixed(2);
     calculateTotals();
 }
 
-// Totals calculation
+// --- CALC ---
 function calculateTotals() {
-    const amounts = document.querySelectorAll('#itemsBody .amount');
-    let subTotal = 0;
-    amounts.forEach(a => subTotal += parseFloat(a.value || 0));
-    const gstRate = 0.18;
-    const myStateCode = '09'; // First 2 digits of your GSTIN
-    const clientGST = document.getElementById('client_gstin').value.trim() || '';
-    let igst = 0, cgst = 0, sgst = 0;
-    if (clientGST.startsWith(myStateCode)) {
-        cgst = subTotal * 0.09;
-        sgst = subTotal * 0.09;
-    } else {
-        igst = subTotal * gstRate;
-    }
-    const grandTotal = subTotal + igst + cgst + sgst;
+    const isNonGST = document.getElementById('is_non_gst').checked;
+    const rows = document.querySelectorAll('#itemsBody tr');
+    
+    rows.forEach(row => {
+        const taxSel = row.querySelector('.taxrate');
+        const hsn = row.querySelector('.hsn');
+        if(isNonGST) {
+            taxSel.value="0"; taxSel.disabled=true; taxSel.classList.add('bg-gray-200');
+            hsn.value=""; hsn.disabled=true; hsn.classList.add('bg-gray-100');
+        } else {
+            taxSel.disabled=false; taxSel.classList.remove('bg-gray-200');
+            hsn.disabled=false; hsn.classList.remove('bg-gray-100');
+        }
+    });
 
-    document.getElementById('subTotal').textContent = subTotal.toFixed(2);
-    document.getElementById('igst').textContent = igst.toFixed(2);
-    document.getElementById('cgst').textContent = cgst.toFixed(2);
-    document.getElementById('sgst').textContent = sgst.toFixed(2);
-    document.getElementById('grandTotal').textContent = grandTotal.toFixed(2);
+    let subInclusive = 0, totalIGST = 0, totalCGST = 0, totalSGST = 0, totalTaxable = 0;
+    const myStateCode = '06'; 
+    const clientGST = document.getElementById('client_gstin').value.trim() || '';
+
+    rows.forEach(row => {
+        const amt = parseFloat(row.querySelector('.amount').value || 0);
+        subInclusive += amt;
+        let taxRate = isNonGST ? 0 : parseFloat(row.querySelector('.taxrate').value || 0);
+        
+        const taxable = amt / (1 + taxRate/100);
+        const taxAmt = amt - taxable;
+        totalTaxable += taxable;
+
+        if (!isNonGST) {
+            if (clientGST.startsWith(myStateCode)) {
+                totalCGST += taxAmt/2; totalSGST += taxAmt/2;
+            } else totalIGST += taxAmt;
+        }
+    });
+
+    document.getElementById('subTotal').textContent = totalTaxable.toFixed(2);
+    document.getElementById('igst').textContent = totalIGST.toFixed(2);
+    document.getElementById('cgst').textContent = totalCGST.toFixed(2);
+    document.getElementById('sgst').textContent = totalSGST.toFixed(2);
+    document.getElementById('grandTotal').textContent = subInclusive.toFixed(2);
 }
 
-// Add event listeners to initial amount field and GSTIN field
-document.querySelector('#itemsBody .amount').addEventListener('input', calculateTotals);
+document.getElementById('is_non_gst').addEventListener('change', calculateTotals);
 document.getElementById('client_gstin').addEventListener('input', calculateTotals);
 
-// --- NEW: Handle Auto/Manual Toggle ---
-document.getElementById('generation_type').addEventListener('change', function() {
-    const manualDetails = document.getElementById('manual_details');
-    if (this.value === 'manual') {
-        manualDetails.classList.remove('hidden');
-        // Set today's date as default for manual date picker
-        document.getElementById('manual_invoice_date').valueAsDate = new Date();
-    } else {
-        manualDetails.classList.add('hidden');
-    }
-});
+// --- RESET ---
+function resetForm() {
+    document.querySelectorAll('input').forEach(i => i.value='');
+    document.querySelectorAll('select').forEach(s => s.selectedIndex=0);
+    document.getElementById('is_non_gst').checked = false;
+    document.getElementById('itemsBody').innerHTML = ''; addRow();
+    document.getElementById('manual_details').classList.add('hidden');
+    calculateTotals();
+}
 
-// Generate PDF
+// --- SUBMIT ---
 document.getElementById('generateBtn').addEventListener('click', async () => {
     const clientName = document.getElementById('client_name').value.trim();
-    const clientAddr1 = document.getElementById('client_address1').value.trim();
-    const clientGST = document.getElementById('client_gstin').value.trim();
-
-    if (!clientName || !clientAddr1 || !clientGST) {
-        return alert('Please fill Client Name, Address Line 1, and GSTIN.');
-    }
-
+    if (!clientName) return alert('Please enter Client Name.');
     const items = document.querySelectorAll('#itemsBody tr');
-    if (!items.length) return alert('Please add at least one item to the invoice.');
-
-    // --- MODIFIED: Send correct payload for auto/manual ---
-    const generationType = document.getElementById('generation_type').value;
+    if (items.length === 1 && !items[0].querySelector('.particularsInput').value) return alert('Please add item.');
 
     const data = {
+        is_non_gst: document.getElementById('is_non_gst').checked,
         client_name: clientName,
-        client_address1: clientAddr1,
+        client_address1: document.getElementById('client_address1').value.trim(),
         client_address2: document.getElementById('client_address2').value.trim(),
-        client_gstin: clientGST,
+        client_gstin: document.getElementById('client_gstin').value.trim(),
+        client_email: document.getElementById('client_email').value.trim(),
+        client_mobile: document.getElementById('client_mobile').value.trim(),
+        shipto_name: document.getElementById('shipto_name').value.trim(),
+        shipto_address1: document.getElementById('shipto_address1').value.trim(),
+        shipto_address2: document.getElementById('shipto_address2').value.trim(),
+        shipto_gstin: document.getElementById('shipto_gstin').value.trim(),
+        shipto_email: document.getElementById('shipto_email').value.trim(),
+        shipto_mobile: document.getElementById('shipto_mobile').value.trim(),
+        po_number: document.getElementById('po_number').value.trim(),
         particulars: Array.from(items).map(tr => tr.querySelector('.particularsInput').value.trim()),
+        qtys: Array.from(items).map(tr => parseFloat(tr.querySelector('.qty').value || 0)),
+        rates: Array.from(items).map(tr => parseFloat(tr.querySelector('.rate').value || 0)),
+        taxrates: Array.from(items).map(tr => parseFloat(tr.querySelector('.taxrate').value || 0)),
+        hsns: Array.from(items).map(tr => tr.querySelector('.hsn').value.trim()),
         amounts: Array.from(items).map(tr => parseFloat(tr.querySelector('.amount').value || 0)),
-        amount: Array.from(items).reduce((sum, tr) => sum + parseFloat(tr.querySelector('.amount').value || 0), 0),
-        
-        // New fields for invoice generation type
-        auto_generate: generationType === 'auto',
+        auto_generate: document.getElementById('generation_type').value === 'auto',
         manual_bill_no: document.getElementById('manual_bill_no').value.trim(),
         manual_invoice_date: document.getElementById('manual_invoice_date').value,
     };
 
-    const res = await fetch('/generate-invoice', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(data)
-    });
-
-    if (!res.ok) {
-        alert('Failed to generate invoice. Check the console for errors.');
-        return;
-    }
-
-    const blob = await res.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    
-    // Extract filename from response header if available
-    const disposition = res.headers.get('Content-Disposition');
-    let filename = 'Invoice.pdf';
-    if (disposition && disposition.indexOf('attachment') !== -1) {
-        const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
-        const matches = filenameRegex.exec(disposition);
-        if (matches != null && matches[1]) {
-            filename = matches[1].replace(/['"]/g, '');
-        }
-    }
-    
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
-
-    // Refresh the list of old invoices after generating a new one
-    setTimeout(loadOldInvoices, 1000);
+    try {
+        const res = await fetch('/generate-invoice', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
+        if (res.ok) {
+            const blob = await res.blob();
+            const a = document.createElement('a'); a.href = window.URL.createObjectURL(blob);
+            a.download = `Invoice_${clientName}_${new Date().getTime()}.pdf`; document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => { loadOldInvoices(); loadParticulars(); }, 1000);
+            resetForm();
+        } else { const err = await res.json(); alert("Error: " + (err.error || "Unknown")); }
+    } catch (e) { alert("Network Error."); console.error(e); }
 });
 
-// Load previous invoices
+// --- HISTORY & CREDIT NOTE LOGIC ---
 async function loadOldInvoices() {
     try {
         const res = await fetch('/invoices-list');
-        const invoices = await res.json();
-        // Sort invoices by bill number descending
-        invoices.sort((a, b) => b.bill_no.localeCompare(a.bill_no, undefined, {numeric: true}));
+        invoiceListCache = await res.json(); // Store for checking flags
+        invoiceListCache.sort((a, b) => b.bill_no.localeCompare(a.bill_no, undefined, {numeric: true}));
+        
         const select = document.getElementById('oldInvoices');
-        select.innerHTML = '<option value="">Select an invoice to re-download</option>';
-        invoices.forEach(inv => {
-            const opt = document.createElement('option');
-            opt.value = inv.bill_no;
-            const grandTotal = inv.grand_total ? inv.grand_total.toFixed(2) : '0.00';
-            opt.textContent = `${inv.bill_no} --- ${inv.client_name} --- ₹${grandTotal}`;
-            select.appendChild(opt);
+        select.innerHTML = '<option value="">Select Recent Invoice...</option>';
+        invoiceListCache.forEach(inv => {
+            const gt = inv.grand_total ? inv.grand_total.toFixed(2) : "0.00";
+            // Add a visual marker (CN Created) if flag is true, just for clarity
+            const status = inv.has_credit_note ? " [CN Created]" : "";
+            select.innerHTML += `<option value="${inv.bill_no}">${inv.bill_no} | ${inv.client_name} | ₹${gt}${status}</option>`;
         });
-    } catch (err) {
-        console.error("Error loading previous invoices:", err);
+        checkCreditNoteStatus(); // Reset buttons state
+    } catch (e) { console.error("Error loading history", e); }
+}
+
+function checkCreditNoteStatus() {
+    const billNo = document.getElementById('oldInvoices').value;
+    const btnGen = document.getElementById('btnGenerateCN');
+    const btnDown = document.getElementById('btnDownloadCN');
+    
+    // Default state (Hide both if nothing selected)
+    if (!billNo) { 
+        btnGen.classList.remove('hidden'); 
+        btnDown.classList.add('hidden'); 
+        return; 
+    }
+
+    const inv = invoiceListCache.find(i => i.bill_no === billNo);
+    
+    // Toggle Logic
+    if (inv && inv.has_credit_note) {
+        btnGen.classList.add('hidden');     // Hide Generate
+        btnDown.classList.remove('hidden'); // Show Download
+    } else {
+        btnGen.classList.remove('hidden');  // Show Generate
+        btnDown.classList.add('hidden');    // Hide Download
     }
 }
 
 function downloadInvoice() {
-    const billNo = document.getElementById('oldInvoices').value;
-    if (!billNo) return alert('Please select a previous invoice from the list.');
-    const encodedBillNo = encodeURIComponent(billNo);
-    window.location.href = `/download-invoice/${encodedBillNo}`;
+    const v = document.getElementById('oldInvoices').value;
+    if(v) window.location.href = `/download-invoice/${encodeURIComponent(v)}`;
+    else alert("Please select an invoice.");
+}
+function generateCreditNote() {
+    const v = document.getElementById('oldInvoices').value;
+    if(v) window.location.href = `/generate-credit-note/${encodeURIComponent(v)}`;
+    else alert("Please select an invoice.");
+}
+function downloadExistingCN() {
+    const v = document.getElementById('oldInvoices').value;
+    // We send to same route with CN- prefix; backend will handle download
+    if(v) window.location.href = `/generate-credit-note/CN-${encodeURIComponent(v)}`;
+    else alert("Please select an invoice.");
 }
 
-// Initial load on page ready
-document.addEventListener("DOMContentLoaded", () => {
-    loadClients();
-    loadOldInvoices();
+document.getElementById('generation_type').addEventListener('change', function() {
+    document.getElementById('manual_details').classList.toggle('hidden', this.value !== 'manual');
 });
+document.addEventListener("DOMContentLoaded", () => { loadClients(); loadParticulars(); loadOldInvoices(); });
 </script>
 </body>
 </html>

@@ -2,6 +2,7 @@ import os
 import io
 import json
 import logging
+import base64
 import pandas as pd
 from datetime import date, datetime
 from urllib.parse import unquote
@@ -11,19 +12,26 @@ from flask_login import LoginManager, UserMixin, login_user, login_required, log
 from dotenv import load_dotenv
 from fpdf import FPDF
 
+# --- FIREBASE SETUP ---
+import firebase_admin
+from firebase_admin import credentials, firestore
+
+# Initialize Firebase using the Environment Variable
+if not firebase_admin._apps:
+    # Decode the Base64 string back to JSON
+    cred_json = json.loads(base64.b64decode(os.getenv("FIREBASE_CREDENTIALS")))
+    cred = credentials.Certificate(cred_json)
+    firebase_admin.initialize_app(cred)
+
+db = firestore.client()
+
 # ------------------ BASE DIR ------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-CLIENTS_FILE = os.path.join(BASE_DIR, "clients.json")
-INVOICES_FILE = os.path.join(BASE_DIR, "invoices.json")
-INVOICE_COUNTER_FILE = os.path.join(BASE_DIR, "invoice_counter.json")
-PARTICULARS_FILE = os.path.join(BASE_DIR, "particulars.json")
-SIGNATURE_IMAGE = os.path.join(BASE_DIR, "Signatory.png")
 CALIBRI_FONT_PATH = os.path.join(BASE_DIR, "CALIBRI.TTF")
-INVOICE_PDF_FOLDER = os.path.join(BASE_DIR, "generated_invoices")
+SIGNATURE_IMAGE = os.path.join(BASE_DIR, "Signatory.png")
 TEMPLATE_DIR = os.path.join(BASE_DIR, "templates")
 
-os.makedirs(INVOICE_PDF_FOLDER, exist_ok=True)
+os.makedirs(os.path.join(BASE_DIR, "generated_invoices"), exist_ok=True)
 
 # ------------------ LOAD ENV ------------------
 load_dotenv()
@@ -51,41 +59,90 @@ AUTH_PASSWORD = os.getenv("LOGIN_PASS", "password")
 def load_user(user_id):
     return User(user_id)
 
-# ------------------ HELPERS ------------------
-def load_json(file_path, default):
-    if os.path.exists(file_path):
-        try:
-            if os.path.getsize(file_path) == 0:
-                logging.warning(f"File {file_path} is empty. Returning default.")
-                return default
-            with open(file_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logging.error(f"Error reading {file_path}: {e}")
-            return default
-    return default
-
-def save_json(data, file_path):
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+# ------------------ FIRESTORE HELPERS ------------------
 
 def load_clients():
-    return load_json(CLIENTS_FILE, {})
+    """Fetches all clients from Firestore 'clients' collection."""
+    try:
+        docs = db.collection('clients').stream()
+        clients = {}
+        for doc in docs:
+            clients[doc.id] = doc.to_dict()
+        return clients
+    except Exception as e:
+        logging.error(f"Error loading clients: {e}")
+        return {}
 
-def save_clients(clients):
-    save_json(clients, CLIENTS_FILE)
+def save_single_client(name, data):
+    """Saves a single client to Firestore."""
+    try:
+        db.collection('clients').document(name).set(data, merge=True)
+    except Exception as e:
+        logging.error(f"Error saving client {name}: {e}")
 
 def load_invoices():
-    return load_json(INVOICES_FILE, [])
+    """Fetches all invoices from Firestore 'invoices' collection."""
+    try:
+        docs = db.collection('invoices').stream()
+        invoices = []
+        for doc in docs:
+            invoices.append(doc.to_dict())
+        return invoices
+    except Exception as e:
+        logging.error(f"Error loading invoices: {e}")
+        return []
 
-def save_invoices(invoices):
-    save_json(invoices, INVOICES_FILE)
-    
+def save_single_invoice(invoice_data):
+    """Saves a single invoice using a sanitized Bill No as ID."""
+    try:
+        # Create a safe document ID (replace slashes with underscores)
+        doc_id = invoice_data['bill_no'].replace('/', '_')
+        db.collection('invoices').document(doc_id).set(invoice_data)
+    except Exception as e:
+        logging.error(f"Error saving invoice: {e}")
+
 def load_particulars():
-    return load_json(PARTICULARS_FILE, {})
+    """Fetches all particulars (items) from Firestore."""
+    try:
+        docs = db.collection('particulars').stream()
+        particulars = {}
+        for doc in docs:
+            particulars[doc.id] = doc.to_dict()
+        return particulars
+    except Exception as e:
+        logging.error(f"Error loading particulars: {e}")
+        return {}
 
-def save_particulars(particulars):
-    save_json(particulars, PARTICULARS_FILE)
+def save_single_particular(name, data):
+    """Saves a single particular item."""
+    try:
+        db.collection('particulars').document(name).set(data, merge=True)
+    except Exception as e:
+        logging.error(f"Error saving particular {name}: {e}")
+
+def get_next_counter(is_credit_note=False):
+    """Atomically increments and retrieves the invoice counter."""
+    doc_ref = db.collection('config').document('counters')
+    
+    @firestore.transactional
+    def update_in_transaction(transaction, doc_ref):
+        snapshot = doc_ref.get(transaction=transaction)
+        if not snapshot.exists:
+            # Initialize if not exists
+            new_data = {"counter": 0, "cn_counter": 0}
+            transaction.set(doc_ref, new_data)
+            current_val = 0
+        else:
+            current_data = snapshot.to_dict()
+            field = "cn_counter" if is_credit_note else "counter"
+            current_val = current_data.get(field, 0)
+        
+        new_val = current_val + 1
+        field = "cn_counter" if is_credit_note else "counter"
+        transaction.update(doc_ref, {field: new_val})
+        return new_val
+
+    return update_in_transaction(db.transaction(), doc_ref)
 
 # ------------------ NUMBER TO WORDS ------------------
 def convert_to_words(number):
@@ -366,7 +423,6 @@ def root():
 @app.route('/clients', methods=['GET'])
 @login_required
 def get_clients_route():
-    # load_clients() is already defined in your helpers
     return jsonify(load_clients())
 
 @app.route("/login", methods=["GET","POST"])
@@ -425,9 +481,7 @@ def handle_invoice():
         hsns = data.get('hsns', [])
         amounts_inclusive = data.get("amounts", [])
 
-        # 3. SAVE PARTICULAR LOGIC (Separated GST vs Non-GST)
-        saved_particulars = load_particulars()
-        items_updated = False
+        # 3. SAVE PARTICULAR LOGIC (Updated for Firestore)
         for i, item_name in enumerate(particulars):
             if item_name:
                 # Store separately so GST items don't overwrite Non-GST items
@@ -437,43 +491,40 @@ def handle_invoice():
                 rate_val = rates[i] if i < len(rates) else 0
                 tax_val = 0 if is_non_gst else (taxrates[i] if i < len(taxrates) else 0)
 
-                if storage_key not in saved_particulars:
-                    saved_particulars[storage_key] = {
-                        "hsn": hsn_val,
-                        "rate": rate_val,
-                        "taxrate": tax_val
-                    }
-                    items_updated = True
-        
-        if items_updated:
-            save_particulars(saved_particulars)
+                # Save directly to DB (merge=True handles updates)
+                save_single_particular(storage_key, {
+                    "hsn": hsn_val,
+                    "rate": rate_val,
+                    "taxrate": tax_val
+                })
 
-        # 4. Save Client
-        clients = load_clients()
-        if client_name and client_name not in clients:
-            clients[client_name] = {
+        # 4. Save Client (Updated for Firestore)
+        if client_name:
+            client_data = {
                 "address1": data.get('client_address1',''),
                 "address2": data.get('client_address2',''),
                 "gstin": data.get('client_gstin',''),
                 "email": data.get('client_email',''),
                 "mobile": data.get('client_mobile','')
             }
-            save_clients(clients)
+            save_single_client(client_name, client_data)
 
-        # 5. Handle Invoice Numbering
+        # 5. Handle Invoice Numbering (Updated for Firestore)
         auto_generate = data.get("auto_generate", True)
         if auto_generate:
-            counter_data = load_json(INVOICE_COUNTER_FILE, {"counter": 0, "cn_counter": 0})
-            counter = counter_data.get("counter",0)+1
-            counter_data['counter']=counter
-            save_json(counter_data, INVOICE_COUNTER_FILE)
+            # Use the new transactional counter helper
+            counter = get_next_counter(is_credit_note=False)
             bill_no = f"TE/2025-26/{counter:04d}"
             invoice_date_str = date.today().strftime('%d-%b-%Y')
         else:
             bill_no = str(data.get("manual_bill_no","")).strip()
             if not bill_no: return jsonify({"error": "Invoice Number required"}), 400
+            
+            # Simple dup check via existing invoices
+            # (In production with many docs, a direct query is better)
             invoices = load_invoices()
             if any(inv['bill_no']==bill_no for inv in invoices): return jsonify({"error": "Duplicate Invoice"}), 409
+            
             manual_date = data.get("manual_invoice_date","")
             if manual_date:
                 invoice_date_str = datetime.strptime(manual_date, '%Y-%m-%d').strftime('%d-%b-%Y')
@@ -552,9 +603,8 @@ def handle_invoice():
             "line_total_amounts": line_total
         }
         
-        invoices = load_invoices()
-        invoices.append(invoice_data)
-        save_invoices(invoices)
+        # Save invoice to Firestore
+        save_single_invoice(invoice_data)
         
         pdf_file = PDF_Generator(invoice_data)
         download_name = f"Invoice_{bill_no.replace('/','_')}.pdf"
@@ -571,7 +621,6 @@ def invoices_list_route():
     invoices = load_invoices()
     
     # Identify which invoices ALREADY have a Credit Note
-    # We look for bill_no's starting with CN-
     cn_original_refs = set()
     
     for inv in invoices:
@@ -619,7 +668,6 @@ def generate_credit_note(bill_no):
         invoices = load_invoices()
         
         # 1. Search if a Credit Note ALREADY exists for this specific invoice
-        # New Style Check:
         existing_cn = next((inv for inv in invoices if inv.get('original_invoice_no') == bill_no), None)
         
         # Old Style Check (Fallback):
@@ -637,13 +685,8 @@ def generate_credit_note(bill_no):
         original_inv = next((inv for inv in invoices if inv['bill_no'] == bill_no), None)
         if not original_inv: return jsonify({"error": "Original Invoice not found"}), 404
 
-        # 3. Generate NEW SERIES Number
-        counter_data = load_json(INVOICE_COUNTER_FILE, {"counter": 0, "cn_counter": 0})
-        cn_counter = counter_data.get("cn_counter", 0) + 1
-        counter_data['cn_counter'] = cn_counter
-        save_json(counter_data, INVOICE_COUNTER_FILE)
-
-        # NEW FORMAT: TE-CN/2025-26/0001
+        # 3. Generate NEW SERIES Number (Updated for Firestore)
+        cn_counter = get_next_counter(is_credit_note=True)
         new_cn_bill_no = f"TE-CN/2025-26/{cn_counter:04d}"
 
         cn_data = original_inv.copy()
@@ -663,8 +706,8 @@ def generate_credit_note(bill_no):
         cn_data['line_tax_amounts'] = [-abs(float(t)) for t in original_inv.get('line_tax_amounts', [])]
         cn_data['line_total_amounts'] = [-abs(float(t)) for t in original_inv.get('line_total_amounts', [])]
 
-        invoices.append(cn_data)
-        save_invoices(invoices)
+        # Save CN to Firestore
+        save_single_invoice(cn_data)
 
         pdf_file = PDF_Generator(cn_data, is_credit_note=True)
         download_name = f"CreditNote_{new_cn_bill_no.replace('/','_')}.pdf"

@@ -2,5 +2,11 @@
   "version": 2,
   "rewrites": [
     { "source": "/(.*)", "destination": "/app.py" }
+  ],
+  "crons": [
+    {
+      "path": "/send-daily-report",
+      "schedule": "29 18 * * *"
+    }
   ]
 }

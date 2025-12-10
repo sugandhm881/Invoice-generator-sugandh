@@ -3,28 +3,91 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>The Element - Login</title>
+    <title>Login - SM Tech</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-100 flex items-center justify-center h-screen">
+<body class="bg-gray-100 flex items-center justify-center h-screen transition-colors duration-500" id="bodyBg">
 
-    <div class="bg-white p-8 rounded-lg shadow-lg w-full max-w-sm text-center">
-        <img src="/static/logo.jpeg" alt="The Element Logo" class="mx-auto mb-6 w-32 h-auto">
-        <h1 class="text-2xl font-bold mb-4">Login to The Element</h1>
+    <div class="bg-white p-8 rounded-lg shadow-2xl w-full max-w-sm text-center transform transition-all duration-300" id="loginCard">
+        
+        <div class="h-32 flex items-center justify-center mb-4">
+            <img id="brandLogo" src="/static/logo.png" alt="Logo" class="max-h-full max-w-full object-contain transition-opacity duration-300">
+        </div>
+
+        <h1 id="brandTitle" class="text-2xl font-bold mb-6 text-gray-800 transition-all duration-300">Login to SM Tech</h1>
 
         {% if error %}
-            <div class="bg-red-100 text-red-700 p-2 rounded mb-4">{{ error }}</div>
+            <div class="bg-red-100 text-red-700 p-2 rounded mb-4 text-sm font-semibold border border-red-200">{{ error }}</div>
         {% endif %}
 
         <form method="POST" class="space-y-4">
-            <input type="text" name="username" placeholder="Username" required
-                   class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-orange-400">
+            <input type="text" id="usernameInput" name="username" placeholder="Enter Username" required
+                   onblur="fetchBranding()" 
+                   class="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-orange-400 transition">
+            
             <input type="password" name="password" placeholder="Password" required
-                   class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-orange-400">
+                   class="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-orange-400 transition">
+            
             <button type="submit"
-                    class="w-full bg-orange-500 text-white py-2 rounded hover:bg-orange-600 transition">Login</button>
+                    class="w-full bg-gradient-to-r from-orange-500 to-orange-600 text-white py-3 rounded font-bold hover:from-orange-600 hover:to-orange-700 shadow-md transition transform hover:-translate-y-0.5">
+                Login
+            </button>
         </form>
     </div>
+
+<script>
+    // Debounce function to prevent too many API calls
+    let timeout = null;
+    const defaultLogo = "/static/logo.png";
+    const defaultTitle = "Login to SM Tech";
+
+    function fetchBranding() {
+        const username = document.getElementById('usernameInput').value.trim();
+        const logoImg = document.getElementById('brandLogo');
+        const titleText = document.getElementById('brandTitle');
+
+        if (!username) {
+            resetBranding();
+            return;
+        }
+
+        // Fetch user specific branding
+        fetch(`/api/get-branding/${username}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.found) {
+                    // Update Title
+                    titleText.innerText = data.company_name || defaultTitle;
+                    
+                    // Update Logo
+                    if (data.logo_base64) {
+                        logoImg.src = "data:image/png;base64," + data.logo_base64;
+                    } else {
+                        logoImg.src = defaultLogo;
+                    }
+                } else {
+                    // If user not found, revert to default
+                    resetBranding();
+                }
+            })
+            .catch(err => {
+                console.error("Error fetching branding:", err);
+                resetBranding();
+            });
+    }
+
+    function resetBranding() {
+        document.getElementById('brandLogo').src = defaultLogo;
+        document.getElementById('brandTitle').innerText = defaultTitle;
+    }
+    
+    // Check automatically if browser autofilled the username on load
+    document.addEventListener("DOMContentLoaded", () => {
+        if(document.getElementById('usernameInput').value) {
+            fetchBranding();
+        }
+    });
+</script>
 
 </body>
 </html>

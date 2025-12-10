@@ -3,13 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>THE ELEMENT - Invoice Generator</title>
+<title>SM Tech - Invoice Generator</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
-    /* Custom style for the datalist dropdown arrow to look consistent */
-    input::-webkit-calendar-picker-indicator {
-        opacity: 100;
-    }
+    input::-webkit-calendar-picker-indicator { opacity: 100; }
+    .hist-checkbox { width: 18px; height: 18px; cursor: pointer; }
 </style>
 </head>
 <body class="bg-gray-100 font-sans p-6">
@@ -17,18 +15,45 @@
 <div class="max-w-6xl mx-auto bg-white shadow-xl rounded-lg p-6">
 
     <div class="flex justify-between items-center mb-6 border-b pb-4">
-        <img src="/static/logo.png" alt="Logo" class="h-16 object-contain">
+        {% if profile.get('logo_base64') %}
+            <img src="data:image/png;base64,{{ profile.logo_base64 }}" alt="Logo" class="h-16 object-contain">
+        {% else %}
+            <img src="/static/logo.png" alt="Logo" class="h-16 object-contain">
+        {% endif %}
         
         <div class="text-center flex-1 px-4">
-            <h1 class="text-3xl font-bold text-gray-800">THE ELEMENT</h1>
+            <h1 class="text-3xl font-bold text-gray-800">{{ profile.get('company_name', 'SM Tech') }}</h1>
             <p class="text-sm text-gray-500 tracking-widest">INVOICE & BILLING SYSTEM</p>
+            
+            {% if current_user.is_master and viewing_user != current_user.id %}
+                <div class="mt-2 inline-block bg-yellow-100 text-yellow-800 text-xs font-bold px-2 py-1 rounded border border-yellow-300">
+                    Viewing Data For: {{ viewing_user }}
+                </div>
+            {% endif %}
         </div>
 
         <div class="flex flex-col items-end space-y-2">
-            <a href="/download-report" class="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded shadow hover:bg-green-700 flex items-center transition">
-                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                Sales Report (Excel)
-            </a>
+            {% if current_user.is_master %}
+            <div class="mb-2">
+                <span class="text-xs text-gray-500 font-bold mr-1">VIEW AS:</span>
+                <select onchange="window.location.href='/set-view-mode/'+this.value" class="text-xs border border-gray-300 rounded p-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                    {% for u in all_users %}
+                        <option value="{{ u }}" {% if viewing_user == u %}selected{% endif %}>
+                            {{ u }} {% if u == current_user.id %}(Me){% endif %}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+
+            <div class="flex space-x-2">
+                <a href="/profile" class="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded shadow hover:bg-blue-700 transition">
+                    {% if current_user.is_master %}Master Settings{% else %}Profile{% endif %}
+                </a>
+                <a href="/download-report" class="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded shadow hover:bg-green-700 flex items-center transition">
+                    Sales Report (Excel)
+                </a>
+            </div>
             <a href="{{ url_for('logout') }}" class="text-red-500 text-sm hover:underline hover:text-red-700">
                 Logout
             </a>
@@ -55,7 +80,7 @@
     <div id="manual_details" class="hidden mb-6 bg-gray-50 p-4 rounded border grid grid-cols-2 gap-4">
         <div>
             <label class="block text-sm font-medium text-gray-700">Manual Invoice No.</label>
-            <input type="text" id="manual_bill_no" placeholder="e.g., INV/0123/24-25" class="mt-1 border rounded px-3 py-2 w-full">
+            <input type="text" id="manual_bill_no" placeholder="e.g., {{ profile.get('invoice_prefix', 'TE') }}/2025-26/0001" class="mt-1 border rounded px-3 py-2 w-full">
         </div>
         <div>
             <label class="block text-sm font-medium text-gray-700">Manual Date</label>
@@ -121,20 +146,11 @@
             </thead>
             <tbody id="itemsBody">
             <tr class="bg-white hover:bg-gray-50 transition">
-                <td class="p-1 border">
-                    <input type="text" list="particulars_list" class="w-full p-2 outline-none particularsInput font-medium" placeholder="Search or Type..." oninput="handleParticularInput(this)">
-                </td>
+                <td class="p-1 border"><input type="text" list="particulars_list" class="w-full p-2 outline-none particularsInput font-medium" placeholder="Search..." oninput="handleParticularInput(this)"></td>
                 <td class="p-1 border"><input type="text" value="998222" class="w-full p-2 outline-none text-center hsn text-sm text-gray-600"></td>
                 <td class="p-1 border"><input type="number" class="w-full p-2 outline-none text-center qty font-bold" value="1" min="1"></td>
                 <td class="p-1 border"><input type="number" class="w-full p-2 outline-none text-right rate" value="0" min="0"></td>
-                <td class="p-1 border">
-                  <select class="w-full p-2 outline-none bg-white taxrate">
-                    <option value="18">18%</option>
-                    <option value="12">12%</option>
-                    <option value="5">5%</option>
-                    <option value="0">0%</option>
-                  </select>
-                </td>
+                <td class="p-1 border"><select class="w-full p-2 outline-none bg-white taxrate"><option value="18">18%</option><option value="12">12%</option><option value="5">5%</option><option value="0">0%</option></select></td>
                 <td class="p-1 border bg-gray-50"><input type="number" class="w-full p-2 outline-none text-right bg-transparent amount font-bold text-gray-700" value="0" readonly></td>
                 <td class="p-1 border text-center"><button type="button" onclick="removeRow(this)" class="text-red-400 hover:text-red-600 font-bold px-2">×</button></td>
             </tr>
@@ -152,18 +168,9 @@
                 <span class="font-medium">₹ <span id="subTotal">0.00</span></span>
             </div>
             <div id="taxBreakdown" class="text-xs text-gray-500 mb-2 border-b pb-2">
-                <div class="flex justify-between">
-                    <span>IGST:</span>
-                    <span>₹ <span id="igst">0.00</span></span>
-                </div>
-                <div class="flex justify-between">
-                    <span>CGST:</span>
-                    <span>₹ <span id="cgst">0.00</span></span>
-                </div>
-                <div class="flex justify-between">
-                    <span>SGST:</span>
-                    <span>₹ <span id="sgst">0.00</span></span>
-                </div>
+                <div class="flex justify-between"><span>IGST:</span><span>₹ <span id="igst">0.00</span></span></div>
+                <div class="flex justify-between"><span>CGST:</span><span>₹ <span id="cgst">0.00</span></span></div>
+                <div class="flex justify-between"><span>SGST:</span><span>₹ <span id="sgst">0.00</span></span></div>
             </div>
             <div class="flex justify-between items-center text-xl font-bold text-gray-800 mt-2">
                 <span>Grand Total:</span>
@@ -174,36 +181,50 @@
 
     <div class="text-center mb-10">
         <button id="generateBtn" class="bg-gradient-to-r from-orange-500 to-red-500 text-white px-10 py-4 rounded-full font-bold text-lg hover:from-orange-600 hover:to-red-600 shadow-lg transform hover:-translate-y-1 transition duration-200 flex items-center justify-center mx-auto">
-            <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
             Generate Invoice PDF
         </button>
     </div>
 
     <div class="border-t pt-6 bg-gray-50 -mx-6 px-6 pb-2 rounded-b-lg">
-        <h3 class="text-sm font-bold text-gray-500 uppercase mb-3">Recent History</h3>
-        <div class="flex flex-col md:flex-row gap-3">
-            <select id="oldInvoices" class="border rounded px-3 py-2 flex-1 bg-white text-sm" onchange="checkCreditNoteStatus()"></select>
+        <h3 class="text-lg font-bold text-gray-700 mb-4">Manage Recent History</h3>
+        
+        <div class="flex flex-col md:flex-row justify-between items-center mb-4 gap-3">
+            <input type="text" id="historySearch" placeholder="Search by Bill No or Client..." class="border rounded p-2 text-sm w-full md:w-64" oninput="filterHistory()">
             
-            <button id="btnDownloadInvoice" onclick="downloadInvoice()" class="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 text-sm font-medium">
-                Download Invoice
-            </button>
+            <div class="flex items-center gap-2">
+                <div class="flex border rounded overflow-hidden">
+                    <button onclick="selectAllHistory(true)" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-xs font-medium border-r">Select All</button>
+                    <button onclick="selectAllHistory(false)" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-xs font-medium">Deselect</button>
+                </div>
+                <button onclick="downloadZip()" class="bg-indigo-600 text-white px-4 py-1.5 rounded text-sm font-medium hover:bg-indigo-700 flex items-center">
+                    Download Selected (ZIP)
+                </button>
+            </div>
+        </div>
 
-            <button id="btnGenerateCN" onclick="generateCreditNote()" class="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 text-sm font-medium">
-                Generate Credit Note
-            </button>
-
-            <button id="btnDownloadCN" onclick="downloadExistingCN()" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm font-medium hidden">
-                Download Credit Note
-            </button>
+        <div class="overflow-x-auto max-h-96 border rounded bg-white shadow-sm">
+            <table class="w-full text-sm text-left">
+                <thead class="bg-gray-100 sticky top-0 border-b">
+                    <tr>
+                        <th class="p-3 w-12 text-center bg-gray-100">✓</th>
+                        <th class="p-3 bg-gray-100">Bill No</th>
+                        <th class="p-3 bg-gray-100">Date</th>
+                        <th class="p-3 bg-gray-100">Client</th>
+                        <th class="p-3 text-right bg-gray-100">Amount</th>
+                        <th class="p-3 text-center bg-gray-100">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="historyTableBody">
+                    </tbody>
+            </table>
         </div>
     </div>
 </div>
 
 <script>
 let particularsData = {}; 
-let invoiceListCache = []; // Store full data to check flags
+let invoiceListCache = []; 
 
-// --- INIT ---
 async function loadClients() {
     try {
         const res = await fetch('/clients');
@@ -215,7 +236,7 @@ async function loadClients() {
             opt.value = name; opt.textContent = name;
             select.appendChild(opt);
         }
-    } catch(e) { console.error("Error loading clients", e); }
+    } catch(e) {}
 }
 
 async function loadParticulars() {
@@ -228,27 +249,103 @@ async function loadParticulars() {
             const opt = document.createElement('option');
             opt.value = name; datalist.appendChild(opt);
         }
-    } catch(e) { console.error("Error loading particulars", e); }
+    } catch(e) {}
 }
 
-// --- AUTO FILL ---
+async function loadOldInvoices() {
+    try {
+        const res = await fetch('/invoices-list');
+        invoiceListCache = await res.json(); 
+        invoiceListCache.sort((a, b) => b.bill_no.localeCompare(a.bill_no, undefined, {numeric: true}));
+        renderHistoryTable(invoiceListCache);
+    } catch (e) { console.error(e); }
+}
+
+function renderHistoryTable(data) {
+    const tbody = document.getElementById('historyTableBody');
+    tbody.innerHTML = '';
+    if(data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-gray-500">No invoices found.</td></tr>';
+        return;
+    }
+    data.forEach(inv => {
+        const row = document.createElement('tr');
+        row.className = "border-b hover:bg-gray-50 transition";
+        row.innerHTML = `
+            <td class="p-3 text-center"><input type="checkbox" class="hist-checkbox" value="${inv.bill_no}"></td>
+            <td class="p-3 font-medium text-gray-800">${inv.bill_no} ${inv.has_credit_note ? '<span class="ml-1 text-[10px] bg-red-100 text-red-600 px-1 rounded font-bold border border-red-200">CN EXISTS</span>' : ''}</td>
+            <td class="p-3 text-gray-600">${inv.invoice_date || '-'}</td>
+            <td class="p-3 text-gray-700">${inv.client_name || '-'}</td>
+            <td class="p-3 text-right font-medium">₹${inv.grand_total ? inv.grand_total.toFixed(2) : '0.00'}</td>
+            <td class="p-3 text-center flex justify-center space-x-3">
+                <button onclick="downloadSingle('${inv.bill_no}')" class="text-blue-600 hover:text-blue-800" title="Download PDF">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                </button>
+                <button onclick="emailSingle('${inv.bill_no}')" class="text-green-600 hover:text-green-800" title="Email Client">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                </button>
+                ${!inv.has_credit_note && !inv.bill_no.startsWith('TE-CN') ? `
+                <button onclick="genCN('${inv.bill_no}')" class="text-orange-500 hover:text-orange-700 font-bold text-xs border border-orange-300 px-1 rounded" title="Create Credit Note">CN</button>
+                ` : ''}
+            </td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+function filterHistory() {
+    const term = document.getElementById('historySearch').value.toLowerCase();
+    const filtered = invoiceListCache.filter(i => 
+        i.bill_no.toLowerCase().includes(term) || 
+        (i.client_name && i.client_name.toLowerCase().includes(term))
+    );
+    renderHistoryTable(filtered);
+}
+
+function selectAllHistory(select) {
+    document.querySelectorAll('.hist-checkbox').forEach(cb => cb.checked = select);
+}
+
+function downloadSingle(bno) { window.location.href = `/download-invoice/${encodeURIComponent(bno)}`; }
+async function emailSingle(bno) {
+    if(!confirm(`Send email to client for Invoice ${bno}?`)) return;
+    try {
+        const res = await fetch(`/email-invoice/${encodeURIComponent(bno)}`, {method:'POST'});
+        const d = await res.json();
+        alert(d.message || d.error);
+    } catch(e) { alert("Error sending email"); }
+}
+function genCN(bno) { window.location.href = `/generate-credit-note/${encodeURIComponent(bno)}`; }
+async function downloadZip() {
+    const selected = Array.from(document.querySelectorAll('.hist-checkbox:checked')).map(cb => cb.value);
+    if(selected.length === 0) return alert("Select at least one invoice.");
+    try {
+        const res = await fetch('/download-zip', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({bill_nos: selected})
+        });
+        if(res.ok) {
+            const blob = await res.blob();
+            const a = document.createElement('a');
+            a.href = window.URL.createObjectURL(blob);
+            a.download = "Invoices.zip"; document.body.appendChild(a); a.click(); a.remove();
+        } else alert("Error generating zip");
+    } catch(e) { alert("Network Error"); }
+}
+
 function handleParticularInput(input) {
     const val = input.value.trim(); if (!val) return;
     const isNonGST = document.getElementById('is_non_gst').checked;
     const row = input.closest('tr');
-    
-    // Check keys
     const nonGstKey = val + "_NONGST";
     const standardKey = val;
     let foundData = null;
-
     if (isNonGST) {
         if (particularsData[nonGstKey]) foundData = particularsData[nonGstKey];
         else if (particularsData[standardKey]) foundData = particularsData[standardKey];
     } else {
         if (particularsData[standardKey]) foundData = particularsData[standardKey];
     }
-
     if (foundData) {
         if(foundData.rate !== undefined) row.querySelector('.rate').value = foundData.rate;
         if(isNonGST) row.querySelector('.hsn').value = ""; 
@@ -257,7 +354,6 @@ function handleParticularInput(input) {
         calculateRowAmount.call(row.querySelector('.qty'));
     }
 }
-
 document.getElementById('clientSelect').addEventListener('change', function() {
     const name = this.value; if (!name) return; 
     fetch('/clients').then(res => res.json()).then(data => {
@@ -272,14 +368,11 @@ document.getElementById('clientSelect').addEventListener('change', function() {
         calculateTotals();
     });
 });
-
 function copyBillToToShipTo() {
     ['name','address1','address2','gstin','email','mobile'].forEach(field => {
         document.getElementById('shipto_'+field).value = document.getElementById('client_'+field).value;
     });
 }
-
-// --- ROW ---
 function addRow() {
     const tbody = document.getElementById('itemsBody');
     const row = document.createElement('tr');
@@ -309,12 +402,9 @@ function calculateRowAmount() {
     row.querySelector('.amount').value = (parseFloat(row.querySelector('.qty').value||0) * parseFloat(row.querySelector('.rate').value||0)).toFixed(2);
     calculateTotals();
 }
-
-// --- CALC ---
 function calculateTotals() {
     const isNonGST = document.getElementById('is_non_gst').checked;
     const rows = document.querySelectorAll('#itemsBody tr');
-    
     rows.forEach(row => {
         const taxSel = row.querySelector('.taxrate');
         const hsn = row.querySelector('.hsn');
@@ -326,38 +416,30 @@ function calculateTotals() {
             hsn.disabled=false; hsn.classList.remove('bg-gray-100');
         }
     });
-
     let subInclusive = 0, totalIGST = 0, totalCGST = 0, totalSGST = 0, totalTaxable = 0;
     const myStateCode = '06'; 
     const clientGST = document.getElementById('client_gstin').value.trim() || '';
-
     rows.forEach(row => {
         const amt = parseFloat(row.querySelector('.amount').value || 0);
         subInclusive += amt;
         let taxRate = isNonGST ? 0 : parseFloat(row.querySelector('.taxrate').value || 0);
-        
         const taxable = amt / (1 + taxRate/100);
         const taxAmt = amt - taxable;
         totalTaxable += taxable;
-
         if (!isNonGST) {
             if (clientGST.startsWith(myStateCode)) {
                 totalCGST += taxAmt/2; totalSGST += taxAmt/2;
             } else totalIGST += taxAmt;
         }
     });
-
     document.getElementById('subTotal').textContent = totalTaxable.toFixed(2);
     document.getElementById('igst').textContent = totalIGST.toFixed(2);
     document.getElementById('cgst').textContent = totalCGST.toFixed(2);
     document.getElementById('sgst').textContent = totalSGST.toFixed(2);
     document.getElementById('grandTotal').textContent = subInclusive.toFixed(2);
 }
-
 document.getElementById('is_non_gst').addEventListener('change', calculateTotals);
 document.getElementById('client_gstin').addEventListener('input', calculateTotals);
-
-// --- RESET ---
 function resetForm() {
     document.querySelectorAll('input').forEach(i => i.value='');
     document.querySelectorAll('select').forEach(s => s.selectedIndex=0);
@@ -366,14 +448,11 @@ function resetForm() {
     document.getElementById('manual_details').classList.add('hidden');
     calculateTotals();
 }
-
-// --- SUBMIT ---
 document.getElementById('generateBtn').addEventListener('click', async () => {
     const clientName = document.getElementById('client_name').value.trim();
     if (!clientName) return alert('Please enter Client Name.');
     const items = document.querySelectorAll('#itemsBody tr');
     if (items.length === 1 && !items[0].querySelector('.particularsInput').value) return alert('Please add item.');
-
     const data = {
         is_non_gst: document.getElementById('is_non_gst').checked,
         client_name: clientName,
@@ -399,7 +478,6 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
         manual_bill_no: document.getElementById('manual_bill_no').value.trim(),
         manual_invoice_date: document.getElementById('manual_invoice_date').value,
     };
-
     try {
         const res = await fetch('/generate-invoice', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
         if (res.ok) {
@@ -411,67 +489,6 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
         } else { const err = await res.json(); alert("Error: " + (err.error || "Unknown")); }
     } catch (e) { alert("Network Error."); console.error(e); }
 });
-
-// --- HISTORY & CREDIT NOTE LOGIC ---
-async function loadOldInvoices() {
-    try {
-        const res = await fetch('/invoices-list');
-        invoiceListCache = await res.json(); // Store for checking flags
-        invoiceListCache.sort((a, b) => b.bill_no.localeCompare(a.bill_no, undefined, {numeric: true}));
-        
-        const select = document.getElementById('oldInvoices');
-        select.innerHTML = '<option value="">Select Recent Invoice...</option>';
-        invoiceListCache.forEach(inv => {
-            const gt = inv.grand_total ? inv.grand_total.toFixed(2) : "0.00";
-            // Add a visual marker (CN Created) if flag is true, just for clarity
-            const status = inv.has_credit_note ? " [CN Created]" : "";
-            select.innerHTML += `<option value="${inv.bill_no}">${inv.bill_no} | ${inv.client_name} | ₹${gt}${status}</option>`;
-        });
-        checkCreditNoteStatus(); // Reset buttons state
-    } catch (e) { console.error("Error loading history", e); }
-}
-
-function checkCreditNoteStatus() {
-    const billNo = document.getElementById('oldInvoices').value;
-    const btnGen = document.getElementById('btnGenerateCN');
-    const btnDown = document.getElementById('btnDownloadCN');
-    
-    // Default state (Hide both if nothing selected)
-    if (!billNo) { 
-        btnGen.classList.remove('hidden'); 
-        btnDown.classList.add('hidden'); 
-        return; 
-    }
-
-    const inv = invoiceListCache.find(i => i.bill_no === billNo);
-    
-    // Toggle Logic
-    if (inv && inv.has_credit_note) {
-        btnGen.classList.add('hidden');     // Hide Generate
-        btnDown.classList.remove('hidden'); // Show Download
-    } else {
-        btnGen.classList.remove('hidden');  // Show Generate
-        btnDown.classList.add('hidden');    // Hide Download
-    }
-}
-
-function downloadInvoice() {
-    const v = document.getElementById('oldInvoices').value;
-    if(v) window.location.href = `/download-invoice/${encodeURIComponent(v)}`;
-    else alert("Please select an invoice.");
-}
-function generateCreditNote() {
-    const v = document.getElementById('oldInvoices').value;
-    if(v) window.location.href = `/generate-credit-note/${encodeURIComponent(v)}`;
-    else alert("Please select an invoice.");
-}
-function downloadExistingCN() {
-    const v = document.getElementById('oldInvoices').value;
-    // We send to same route with CN- prefix; backend will handle download
-    if(v) window.location.href = `/generate-credit-note/CN-${encodeURIComponent(v)}`;
-    else alert("Please select an invoice.");
-}
-
 document.getElementById('generation_type').addEventListener('change', function() {
     document.getElementById('manual_details').classList.toggle('hidden', this.value !== 'manual');
 });

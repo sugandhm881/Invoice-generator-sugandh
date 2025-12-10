@@ -13,12 +13,13 @@ from email import encoders
 from datetime import date, datetime, timedelta
 from urllib.parse import unquote
 
-import pandas as pd
+# REMOVED: import pandas as pd 
+from openpyxl import Workbook # ADDED: Lightweight Excel library
 from flask import Flask, request, send_file, jsonify, render_template, redirect, url_for, flash, session
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from dotenv import load_dotenv
 from fpdf import FPDF
-from PIL import Image  # <--- NEW IMPORT FOR IMAGE PROCESSING
+from PIL import Image
 
 # --- LOAD ENV ---
 load_dotenv()
@@ -38,7 +39,6 @@ if not firebase_admin._apps:
         if os.path.exists(key_path):
             cred = credentials.Certificate(key_path)
         else:
-            # Create a dummy app context if no creds (prevents crash on deployment w/o env)
             cred = None
             logging.warning("No Firebase Credentials found. DB calls will fail.")
     
@@ -89,29 +89,21 @@ def load_user(user_id):
     except: pass
     return None
 
-# ------------------ IMAGE HELPER (NEW) ------------------
+# ------------------ IMAGE HELPER ------------------
 def compress_image(file_storage, max_width=400):
-    """Resizes and compresses image to keep it under 1MB for Firestore."""
     try:
         img = Image.open(file_storage)
-        
-        # Calculate new height to maintain aspect ratio
         width_percent = (max_width / float(img.size[0]))
-        
-        # Only resize if the image is actually larger than max_width
         if width_percent < 1:
             new_height = int((float(img.size[1]) * float(width_percent)))
             img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
         
         output = io.BytesIO()
-        
-        # Preserve PNG transparency (for signatures), Convert others to JPEG
         if img.format == 'PNG' or img.mode == 'RGBA':
             img.save(output, format='PNG', optimize=True)
         else:
             img = img.convert('RGB')
             img.save(output, format='JPEG', quality=70, optimize=True)
-            
         return base64.b64encode(output.getvalue()).decode('utf-8')
     except Exception as e:
         logging.error(f"Error processing image: {e}")
@@ -155,7 +147,6 @@ def get_seller_profile_data(target_user_id=None):
     try:
         base = get_db_base(target_user=target_user_id)
         is_root = (base == db)
-        
         if is_root:
             doc = base.collection('config').document('seller_profile').get()
         else:
@@ -722,19 +713,24 @@ def send_daily_report():
         profile = get_seller_profile_data()
         seller_email = profile.get('email', EMAIL_USER)
 
-        report_data = []
+        # REPLACED PANDAS LOGIC WITH OPENPYXL
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Sales Report"
+        
+        # Headers
+        ws.append(["Date", "Bill No", "Client", "Total"])
+        
         for inv in invoices:
-            report_data.append({
-                "Date": inv.get('invoice_date'),
-                "Bill No": inv.get('bill_no'),
-                "Client": inv.get('client_name'),
-                "Total": inv.get('grand_total')
-            })
+            ws.append([
+                inv.get('invoice_date'),
+                inv.get('bill_no'),
+                inv.get('client_name'),
+                inv.get('grand_total')
+            ])
 
-        df = pd.DataFrame(report_data)
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False)
+        wb.save(output)
         output.seek(0)
         
         subject = f"Daily Sales Report (All Time) - {date.today()}"
@@ -869,7 +865,17 @@ def generate_credit_note(bill_no):
 def download_excel_report():
     try:
         invoices = load_invoices()
-        report_data = []
+        # REPLACED PANDAS LOGIC WITH OPENPYXL
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Sales Register"
+        
+        ws.append([
+            "Invoice Date", "Bill No", "Client Name", "Client GSTIN", 
+            "Item Name", "HSN", "Qty", "Rate (Incl Tax)", 
+            "GST %", "Taxable Value", "Tax Amount", "Line Total", "Doc Type"
+        ])
+        
         for inv in invoices:
             part_list = inv.get('particulars', [])
             hsn_list = inv.get('hsns', [])
@@ -883,25 +889,25 @@ def download_excel_report():
                 doc_type = "Tax Invoice"
                 if inv.get('is_credit_note'): doc_type = "Credit Note"
                 elif inv.get('is_non_gst'): doc_type = "Bill of Supply"
-                report_data.append({
-                    "Invoice Date": inv.get('invoice_date'),
-                    "Bill No": inv.get('bill_no'),
-                    "Client Name": inv.get('client_name'),
-                    "Client GSTIN": inv.get('client_gstin'),
-                    "Item Name": part_list[i] if i < len(part_list) else "",
-                    "HSN": hsn_list[i] if i < len(hsn_list) else "",
-                    "Qty": float(qty_list[i]) if i < len(qty_list) else 0,
-                    "Rate (Incl Tax)": float(rate_list[i]) if i < len(rate_list) else 0,
-                    "GST %": float(tax_rate_list[i]) if i < len(tax_rate_list) else 0,
-                    "Taxable Value": float(taxable_list[i]) if i < len(taxable_list) else 0,
-                    "Tax Amount": float(tax_amt_list[i]) if i < len(tax_amt_list) else 0,
-                    "Line Total": float(total_list[i]) if i < len(total_list) else 0,
-                    "Doc Type": doc_type
-                })
-        df = pd.DataFrame(report_data)
+                
+                ws.append([
+                    inv.get('invoice_date'),
+                    inv.get('bill_no'),
+                    inv.get('client_name'),
+                    inv.get('client_gstin'),
+                    part_list[i] if i < len(part_list) else "",
+                    hsn_list[i] if i < len(hsn_list) else "",
+                    float(qty_list[i]) if i < len(qty_list) else 0,
+                    float(rate_list[i]) if i < len(rate_list) else 0,
+                    float(tax_rate_list[i]) if i < len(tax_rate_list) else 0,
+                    float(taxable_list[i]) if i < len(taxable_list) else 0,
+                    float(tax_amt_list[i]) if i < len(tax_amt_list) else 0,
+                    float(total_list[i]) if i < len(total_list) else 0,
+                    doc_type
+                ])
+
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Sales Register')
+        wb.save(output)
         output.seek(0)
         return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=f'Sales_Report_{date.today()}.xlsx')
     except Exception as e:

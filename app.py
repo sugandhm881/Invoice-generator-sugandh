@@ -6,6 +6,9 @@ import base64
 import zipfile
 import tempfile
 import smtplib
+import random
+import string
+import qrcode
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -61,9 +64,11 @@ EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
 EMAIL_USER = os.getenv('EMAIL_USER')
 EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
 
-# --- TIME CONFIGURATION ---
-# Cron hits at 16:30 UTC (10:00 PM IST)
-# Python checks UTC hour. 16:30 UTC has an hour of 16.
+# UPI CONFIG
+UPI_ID = "sugandh.mishra1@ybl"
+UPI_NAME = "Sugandh Mishra"
+
+# CRON TIME (UTC) -> 16:30 UTC = 10:00 PM IST
 REPORT_HOUR_UTC = 16 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -77,23 +82,68 @@ MASTER_USERNAME = os.getenv("LOGIN_USER", "admin")
 MASTER_PASSWORD = os.getenv("LOGIN_PASS", "password")
 
 class User(UserMixin):
-    def __init__(self, id, is_master=False):
+    def __init__(self, id, is_master=False, payment_active=True):
         self.id = id
         self.is_master = is_master
+        # payment_active determines if they can access the dashboard.
+        # It is SEPARATE from Flask-Login's is_active property.
+        self.payment_active = payment_active
+
+    @property
+    def is_active(self):
+        # Always return True so Flask-Login allows the session to be created.
+        # We will restrict access using the check_activation middleware instead.
+        return True
 
 @login_manager.user_loader
 def load_user(user_id):
     if user_id == MASTER_USERNAME:
-        return User(user_id, is_master=True)
+        # Master is always payment active
+        return User(user_id, is_master=True, payment_active=True)
     
     try:
         user_doc = db.collection('app_users').document(user_id).get()
         if user_doc.exists:
-            return User(user_id, is_master=False)
+            data = user_doc.to_dict()
+            # Check the DB 'is_active' flag for payment status
+            db_active_status = data.get('is_active', False)
+            return User(user_id, is_master=False, payment_active=db_active_status)
     except: pass
     return None
 
-# ------------------ IMAGE HELPER ------------------
+# ------------------ ACTIVATION MIDDLEWARE ------------------
+@app.before_request
+def check_activation():
+    """
+    Forces users with payment_active=False to the payment page.
+    Master user is exempt.
+    """
+    if current_user.is_authenticated:
+        # If user is NOT master AND NOT payment active
+        if not current_user.is_master and not current_user.payment_active:
+            # Allow access only to specific endpoints needed for activation/logout
+            if request.endpoint not in ['activation_page', 'logout', 'static', 'check_status_api']:
+                return redirect(url_for('activation_page'))
+
+# ------------------ HELPERS ------------------
+def generate_otp():
+    return ''.join(random.choices(string.digits, k=6))
+
+def send_email_raw(to_email, subject, body):
+    try:
+        msg = MIMEText(body)
+        msg['Subject'] = subject
+        msg['From'] = EMAIL_USER
+        msg['To'] = to_email
+        with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as server:
+            server.starttls()
+            server.login(EMAIL_USER, EMAIL_PASSWORD)
+            server.send_message(msg)
+        return True
+    except Exception as e:
+        logging.error(f"Email Error: {e}")
+        return False
+
 def compress_image(file_storage, max_width=400):
     try:
         img = Image.open(file_storage)
@@ -115,17 +165,21 @@ def compress_image(file_storage, max_width=400):
 
 # ------------------ DATABASE CONTEXT HELPER ------------------
 def get_db_base(target_user=None):
+    # Case 1: Specific Target (For Profile Editing logic)
     if target_user:
         if target_user == MASTER_USERNAME: return db
         return db.collection('users').document(target_user)
 
+    # Case 2: Sub-User (Locked to self)
     if current_user.is_authenticated and not current_user.is_master:
         return db.collection('users').document(current_user.id)
 
+    # Case 3: Master "Viewing As" someone else
     view_mode = session.get('view_mode')
     if current_user.is_authenticated and current_user.is_master and view_mode and view_mode != MASTER_USERNAME:
         return db.collection('users').document(view_mode)
 
+    # Case 4: Master Root
     return db
 
 def get_all_users():
@@ -183,14 +237,14 @@ def save_single_client(name, data):
     base = get_db_base()
     base.collection('clients').document(name).set(data, merge=True)
 
-# Helper to load invoices for a SPECIFIC user (for cron)
 def load_invoices_for_user(target_user_id):
+    """Helper to load invoices for a SPECIFIC user (used for cron)"""
     base = get_db_base(target_user=target_user_id)
     docs = base.collection('invoices').stream()
     return [doc.to_dict() for doc in docs]
 
 def load_invoices():
-    # Context aware (uses get_db_base internally)
+    """Context aware loader (uses get_db_base internally)"""
     base = get_db_base()
     docs = base.collection('invoices').stream()
     return [doc.to_dict() for doc in docs]
@@ -228,6 +282,13 @@ def get_next_counter(is_credit_note=False):
         transaction.update(doc_ref, {field: new_val})
         return new_val
     return update_in_transaction(db.transaction(), doc_ref)
+
+def get_all_activation_requests():
+    """Fetch ALL payment history (Pending AND Approved) for Master dashboard."""
+    try:
+        docs = db.collection('activation_requests').order_by('timestamp', direction=firestore.Query.DESCENDING).stream()
+        return [doc.to_dict() for doc in docs]
+    except: return []
 
 # ------------------ UTILS & PDF ------------------
 def convert_to_words(number):
@@ -509,23 +570,124 @@ def login():
         username = request.form.get("username","")
         password = request.form.get("password","")
         
-        # 1. Master Check
+        # Validate Credentials First
+        valid_creds = False
+        is_master = False
+        
         if username == MASTER_USERNAME and password == MASTER_PASSWORD:
-            login_user(User(username, is_master=True))
-            return redirect(url_for("home"))
+            valid_creds = True
+            is_master = True
+        else:
+            try:
+                user_doc = db.collection('app_users').document(username).get()
+                if user_doc.exists and user_doc.to_dict().get('password') == password:
+                    valid_creds = True
+            except: pass
         
-        # 2. Sub-User Check (Firestore)
-        try:
-            user_doc = db.collection('app_users').document(username).get()
-            if user_doc.exists:
-                user_data = user_doc.to_dict()
-                if user_data.get('password') == password:
-                    login_user(User(username, is_master=False))
-                    return redirect(url_for("home"))
-        except: pass
-        
-        error = "Invalid Credentials"
+        if valid_creds:
+            # 2FA LOGIC
+            otp = generate_otp()
+            session['temp_user_id'] = username
+            session['temp_is_master'] = is_master
+            session['otp'] = otp
+            
+            # --- EMAIL SENDING LOGIC (UPDATED) ---
+            # 1. Try to fetch Master User Profile Email from DB
+            try:
+                master_profile_doc = db.collection('config').document('seller_profile').get()
+                master_email = master_profile_doc.to_dict().get('email')
+            except:
+                master_email = None
+            
+            # 2. Fallback to sender email if not found
+            target_email = master_email if master_email else EMAIL_USER
+            
+            email_body = f"Login Attempt for user: {username}\nOTP: {otp}\n\nIf this was not you, please check your security."
+            send_email_raw(target_email, "Security OTP - Invoice App", email_body)
+            
+            return render_template("verify_otp.html")
+        else:
+            error = "Invalid Credentials"
+    
     return render_template("login.html", error=error)
+
+@app.route("/verify-otp", methods=["POST"])
+def verify_otp():
+    otp_input = request.form.get("otp")
+    if otp_input == session.get('otp') and 'temp_user_id' in session:
+        user_id = session['temp_user_id']
+        is_master = session['temp_is_master']
+        
+        # Load user logic must match load_user function to ensure correct session structure
+        # Explicitly check DB for active status for sub-users
+        payment_active = True
+        if not is_master:
+            try:
+                u_doc = db.collection('app_users').document(user_id).get()
+                payment_active = u_doc.to_dict().get('is_active', False)
+            except: payment_active = False
+        
+        # Create User with is_active property implicitly True (handled in class)
+        user_obj = User(user_id, is_master=is_master, payment_active=payment_active)
+
+        # Log the user in (Flask-Login will now accept this user because .is_active is True)
+        login_user(user_obj)
+        
+        # Clear Session
+        session.pop('otp', None)
+        session.pop('temp_user_id', None)
+        session.pop('temp_is_master', None)
+        
+        # Redirect will now be intercepted by middleware if payment_active is False
+        return redirect(url_for("home"))
+    
+    return render_template("verify_otp.html", error="Invalid OTP")
+
+@app.route("/activation", methods=["GET", "POST"])
+@login_required
+def activation_page():
+    if request.method == "POST":
+        amount = request.form.get("amount")
+        utr = request.form.get("utr")
+        
+        # SAVE ACTIVATION REQUEST TO DB
+        req_data = {
+            "user_id": current_user.id,
+            "amount": amount,
+            "utr": utr,
+            "status": "Pending",
+            "timestamp": datetime.now().isoformat(),
+            "date_display": date.today().strftime('%d-%b-%Y')
+        }
+        try:
+            db.collection('activation_requests').document(f"{current_user.id}_{utr}").set(req_data)
+        except Exception as e:
+            logging.error(f"Error saving request: {e}")
+
+        # Notify Master
+        try:
+            master_profile_doc = db.collection('config').document('seller_profile').get()
+            master_email = master_profile_doc.to_dict().get('email')
+        except: master_email = EMAIL_USER
+        
+        target_email = master_email if master_email else EMAIL_USER
+
+        body = f"User {current_user.id} has requested activation.\nAmount: Rs. {amount}\nUTR/Ref No: {utr}\n\nPlease check the dashboard to verify and activate."
+        send_email_raw(target_email, "New Activation Request", body)
+        
+        flash("Request Sent! Admin will verify and activate your account.", "success")
+        return redirect(url_for("activation_page"))
+
+    # Generate QR Code
+    upi_str = f"upi://pay?pa={UPI_ID}&pn={UPI_NAME}&cu=INR"
+    qr = qrcode.make(upi_str)
+    
+    # Save QR to base64
+    buf = io.BytesIO()
+    qr.save(buf, format="PNG")
+    qr_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    
+    return render_template("activation.html", qr_code=qr_b64)
 
 @app.route("/api/get-branding/<username>")
 def get_branding(username):
@@ -581,17 +743,54 @@ def user_profile():
             target_user = current_user.id
         elif not target_user:
             target_user = MASTER_USERNAME
+        
         profile_data = get_seller_profile_data(target_user_id=target_user)
-        return render_template('user_profile.html', profile=profile_data, target_user=target_user)
+        
+        target_is_active = True
+        if target_user != MASTER_USERNAME:
+             try:
+                 u = db.collection('app_users').document(target_user).get()
+                 target_is_active = u.to_dict().get('is_active', False)
+             except: pass
+        
+        # --- NEW: FETCH ALL REQUESTS FOR MASTER ---
+        all_requests = []
+        if current_user.is_master:
+            all_requests = get_all_activation_requests()
+
+        return render_template('user_profile.html', profile=profile_data, target_user=target_user, target_is_active=target_is_active, pending_requests=all_requests)
 
     if request.method == 'POST':
+        # VERIFY REQUEST LOGIC
+        if 'verify_request' in request.form:
+            if not current_user.is_master: return "Unauthorized", 403
+            req_id = request.form.get('request_id')
+            user_to_activate = request.form.get('user_to_activate')
+            
+            # 1. Activate User
+            db.collection('app_users').document(user_to_activate).set({"is_active": True}, merge=True)
+            # 2. Mark Request as Approved
+            db.collection('activation_requests').document(req_id).update({"status": "Approved"})
+            
+            flash(f"Payment Verified! User {user_to_activate} is now Active.", "success")
+            return redirect(url_for('user_profile'))
+
+        if 'toggle_active' in request.form:
+             if not current_user.is_master: return "Unauthorized", 403
+             target = request.form.get('target_user_id')
+             new_status = request.form.get('toggle_active') == 'true'
+             db.collection('app_users').document(target).set({"is_active": new_status}, merge=True)
+             flash(f"User {target} is now {'Active' if new_status else 'Inactive'}", "success")
+             return redirect(url_for('user_profile', edit_user=target))
+
         if 'new_username' in request.form:
             if not current_user.is_master: return "Unauthorized", 403
             new_u = request.form.get('new_username')
             new_p = request.form.get('new_password')
             if new_u and new_p:
-                db.collection('app_users').document(new_u).set({"password": new_p})
-                flash(f"User {new_u} created successfully!", "success")
+                # NEW USERS ARE INACTIVE BY DEFAULT
+                db.collection('app_users').document(new_u).set({"password": new_p, "is_active": False})
+                flash(f"User {new_u} created! (Inactive by default)", "success")
             return redirect(url_for('user_profile'))
 
         target_user = request.form.get('target_user_id')
@@ -750,37 +949,24 @@ def handle_invoice():
 
 @app.route('/send-daily-report', methods=['GET'])
 def send_daily_report():
-    """
-    CRON JOB ENDPOINT
-    - Logic:
-      1. Iterate through ALL users (Master + Sub-users).
-      2. For MASTER: Send report immediately (if hourly cron is set).
-      3. For SUB-USERS: Send report ONLY if current hour matches REPORT_HOUR_UTC (e.g., 16:00 UTC = 21:30/22:00 IST).
-      4. CONDITION: Only send if invoices exist.
-    """
     try:
         current_hour_utc = datetime.now(timezone.utc).hour
-        users_to_process = get_all_users() # [Master, user1, user2...]
-        
+        users_to_process = get_all_users()
         results = []
 
         for uid in users_to_process:
-            # 1. Check Schedule Logic
             should_run = False
             if uid == MASTER_USERNAME:
-                should_run = True # Master runs every time endpoint is hit
+                should_run = True 
             else:
                 if current_hour_utc == REPORT_HOUR_UTC:
-                    should_run = True # Sub-users run only at specific hour
+                    should_run = True 
 
             if should_run:
-                # 2. Check Data Logic
                 excel_bytes = generate_excel_bytes(uid)
                 if excel_bytes:
-                    # 3. Send Email
                     profile = get_seller_profile_data(target_user_id=uid)
                     seller_email = profile.get('email')
-                    
                     if not seller_email and uid == MASTER_USERNAME:
                         seller_email = EMAIL_USER
                     
@@ -794,7 +980,7 @@ def send_daily_report():
                 else:
                     results.append(f"Skipped {uid}: No invoices found")
             else:
-                results.append(f"Skipped {uid}: Not scheduled time (Current UTC: {current_hour_utc}, Sched UTC: {REPORT_HOUR_UTC})")
+                results.append(f"Skipped {uid}: Not scheduled time")
 
         return jsonify({"status": "success", "log": results})
 

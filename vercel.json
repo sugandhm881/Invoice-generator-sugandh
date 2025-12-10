@@ -1,12 +1,20 @@
 {
-  "version": 2,
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/app.py" }
-  ],
   "crons": [
     {
       "path": "/send-daily-report",
-      "schedule": "29 18 * * *"
+      "schedule": "30 16 * * *"
+    }
+  ],
+  "builds": [
+    {
+      "src": "app.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "app.py"
     }
   ]
 }

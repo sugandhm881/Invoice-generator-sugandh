@@ -10,11 +10,10 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import unquote
 
-# REMOVED: import pandas as pd 
-from openpyxl import Workbook # ADDED: Lightweight Excel library
+from openpyxl import Workbook
 from flask import Flask, request, send_file, jsonify, render_template, redirect, url_for, flash, session
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from dotenv import load_dotenv
@@ -61,6 +60,11 @@ EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
 EMAIL_USER = os.getenv('EMAIL_USER')
 EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
+
+# --- TIME CONFIGURATION ---
+# Cron hits at 16:30 UTC (10:00 PM IST)
+# Python checks UTC hour. 16:30 UTC has an hour of 16.
+REPORT_HOUR_UTC = 16 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -179,7 +183,14 @@ def save_single_client(name, data):
     base = get_db_base()
     base.collection('clients').document(name).set(data, merge=True)
 
+# Helper to load invoices for a SPECIFIC user (for cron)
+def load_invoices_for_user(target_user_id):
+    base = get_db_base(target_user=target_user_id)
+    docs = base.collection('invoices').stream()
+    return [doc.to_dict() for doc in docs]
+
 def load_invoices():
+    # Context aware (uses get_db_base internally)
     base = get_db_base()
     docs = base.collection('invoices').stream()
     return [doc.to_dict() for doc in docs]
@@ -428,6 +439,61 @@ def PDF_Generator(invoice_data, is_credit_note=False):
     
     return io.BytesIO(pdf.output(dest="S").encode("latin-1"))
 
+# ------------------ HELPER: GENERATE EXCEL ------------------
+def generate_excel_bytes(user_id):
+    """
+    Generates Excel report for a specific user.
+    Returns: BytesIO object or None if no invoices found.
+    """
+    invoices = load_invoices_for_user(user_id)
+    if not invoices:
+        return None
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sales Register"
+    
+    ws.append([
+        "Invoice Date", "Bill No", "Client Name", "Client GSTIN", 
+        "Item Name", "HSN", "Qty", "Rate (Incl Tax)", 
+        "GST %", "Taxable Value", "Tax Amount", "Line Total", "Doc Type"
+    ])
+    
+    for inv in invoices:
+        part_list = inv.get('particulars', [])
+        hsn_list = inv.get('hsns', [])
+        qty_list = inv.get('qtys', [])
+        rate_list = inv.get('rates', []) 
+        tax_rate_list = inv.get('taxrates', [])
+        taxable_list = inv.get('amounts', []) 
+        tax_amt_list = inv.get('line_tax_amounts', [])
+        total_list = inv.get('line_total_amounts', [])
+        for i in range(len(part_list)):
+            doc_type = "Tax Invoice"
+            if inv.get('is_credit_note'): doc_type = "Credit Note"
+            elif inv.get('is_non_gst'): doc_type = "Bill of Supply"
+            
+            ws.append([
+                inv.get('invoice_date'),
+                inv.get('bill_no'),
+                inv.get('client_name'),
+                inv.get('client_gstin'),
+                part_list[i] if i < len(part_list) else "",
+                hsn_list[i] if i < len(hsn_list) else "",
+                float(qty_list[i]) if i < len(qty_list) else 0,
+                float(rate_list[i]) if i < len(rate_list) else 0,
+                float(tax_rate_list[i]) if i < len(tax_rate_list) else 0,
+                float(taxable_list[i]) if i < len(taxable_list) else 0,
+                float(tax_amt_list[i]) if i < len(tax_amt_list) else 0,
+                float(total_list[i]) if i < len(total_list) else 0,
+                doc_type
+            ])
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
+
 # ------------------ ROUTES ------------------
 
 @app.route("/", methods=["GET"])
@@ -463,9 +529,7 @@ def login():
 
 @app.route("/api/get-branding/<username>")
 def get_branding(username):
-    """API for login page to fetch custom logo and name."""
     try:
-        # Master Check
         if username == MASTER_USERNAME:
             profile = get_seller_profile_data(target_user_id=MASTER_USERNAME)
             return jsonify({
@@ -474,7 +538,6 @@ def get_branding(username):
                 "logo_base64": profile.get('logo_base64', None)
             })
 
-        # Sub-User Check
         user_doc = db.collection('app_users').document(username).get()
         if user_doc.exists:
             profile = get_seller_profile_data(target_user_id=username)
@@ -485,7 +548,6 @@ def get_branding(username):
             })
             
         return jsonify({"found": False})
-
     except Exception as e:
         return jsonify({"found": False, "error": str(e)})
 
@@ -506,7 +568,6 @@ def logout():
 def set_view_mode(user_id):
     if not current_user.is_master:
         return "Unauthorized", 403
-    
     session['view_mode'] = user_id
     flash(f"Now viewing data as: {user_id}", "info")
     return redirect(url_for("home"))
@@ -514,21 +575,16 @@ def set_view_mode(user_id):
 @app.route('/profile', methods=['GET', 'POST'])
 @login_required
 def user_profile():
-    # --- GET: RENDER PROFILE ---
     if request.method == 'GET':
         target_user = request.args.get('edit_user') 
-        
         if not current_user.is_master:
             target_user = current_user.id
         elif not target_user:
             target_user = MASTER_USERNAME
-
         profile_data = get_seller_profile_data(target_user_id=target_user)
         return render_template('user_profile.html', profile=profile_data, target_user=target_user)
 
-    # --- POST: UPDATE PROFILE (MASTER ONLY) ---
     if request.method == 'POST':
-        # Create New User
         if 'new_username' in request.form:
             if not current_user.is_master: return "Unauthorized", 403
             new_u = request.form.get('new_username')
@@ -538,9 +594,7 @@ def user_profile():
                 flash(f"User {new_u} created successfully!", "success")
             return redirect(url_for('user_profile'))
 
-        # Update Profile
         target_user = request.form.get('target_user_id')
-        
         if not current_user.is_master:
             flash("You are not authorized to update profile settings.", "error")
             return redirect(url_for('user_profile'))
@@ -559,14 +613,10 @@ def user_profile():
             "ifsc": request.form.get('ifsc'),
         }
 
-        # --- PROCESS IMAGES WITH COMPRESSION ---
         logo_file = request.files.get('logo')
         if logo_file and logo_file.filename:
             compressed_logo = compress_image(logo_file, max_width=400)
-            if compressed_logo:
-                data['logo_base64'] = compressed_logo
-            else:
-                flash("Error processing logo image.", "error")
+            if compressed_logo: data['logo_base64'] = compressed_logo
         else:
             existing = get_seller_profile_data(target_user_id=target_user)
             if 'logo_base64' in existing: data['logo_base64'] = existing['logo_base64']
@@ -574,10 +624,7 @@ def user_profile():
         sig_file = request.files.get('signature')
         if sig_file and sig_file.filename:
             compressed_sig = compress_image(sig_file, max_width=300)
-            if compressed_sig:
-                data['signature_base64'] = compressed_sig
-            else:
-                flash("Error processing signature image.", "error")
+            if compressed_sig: data['signature_base64'] = compressed_sig
         else:
             existing = get_seller_profile_data(target_user_id=target_user)
             if 'signature_base64' in existing: data['signature_base64'] = existing['signature_base64']
@@ -594,10 +641,8 @@ def handle_invoice():
         is_non_gst = data.get('is_non_gst', False)
         client_name = data.get('client_name','').strip()
         particulars = data.get('particulars', [])
-        if isinstance(particulars, list):
-            particulars = [str(p).strip() for p in particulars]
-        else:
-            particulars = [str(particulars).strip()]
+        if isinstance(particulars, list): particulars = [str(p).strip() for p in particulars]
+        else: particulars = [str(particulars).strip()]
             
         qtys = data.get('qtys', [])
         rates = data.get('rates', [])
@@ -605,7 +650,6 @@ def handle_invoice():
         hsns = data.get('hsns', [])
         amounts_inclusive = data.get("amounts", [])
 
-        # Save Particulars & Client
         for i, item_name in enumerate(particulars):
             if item_name:
                 storage_key = f"{item_name}_NONGST" if is_non_gst else item_name
@@ -706,40 +750,56 @@ def handle_invoice():
 
 @app.route('/send-daily-report', methods=['GET'])
 def send_daily_report():
+    """
+    CRON JOB ENDPOINT
+    - Logic:
+      1. Iterate through ALL users (Master + Sub-users).
+      2. For MASTER: Send report immediately (if hourly cron is set).
+      3. For SUB-USERS: Send report ONLY if current hour matches REPORT_HOUR_UTC (e.g., 16:00 UTC = 21:30/22:00 IST).
+      4. CONDITION: Only send if invoices exist.
+    """
     try:
-        invoices = load_invoices() 
-        if not invoices: return "No invoices found."
+        current_hour_utc = datetime.now(timezone.utc).hour
+        users_to_process = get_all_users() # [Master, user1, user2...]
+        
+        results = []
 
-        profile = get_seller_profile_data()
-        seller_email = profile.get('email', EMAIL_USER)
+        for uid in users_to_process:
+            # 1. Check Schedule Logic
+            should_run = False
+            if uid == MASTER_USERNAME:
+                should_run = True # Master runs every time endpoint is hit
+            else:
+                if current_hour_utc == REPORT_HOUR_UTC:
+                    should_run = True # Sub-users run only at specific hour
 
-        # REPLACED PANDAS LOGIC WITH OPENPYXL
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Sales Report"
-        
-        # Headers
-        ws.append(["Date", "Bill No", "Client", "Total"])
-        
-        for inv in invoices:
-            ws.append([
-                inv.get('invoice_date'),
-                inv.get('bill_no'),
-                inv.get('client_name'),
-                inv.get('grand_total')
-            ])
+            if should_run:
+                # 2. Check Data Logic
+                excel_bytes = generate_excel_bytes(uid)
+                if excel_bytes:
+                    # 3. Send Email
+                    profile = get_seller_profile_data(target_user_id=uid)
+                    seller_email = profile.get('email')
+                    
+                    if not seller_email and uid == MASTER_USERNAME:
+                        seller_email = EMAIL_USER
+                    
+                    if seller_email:
+                        subject = f"Daily Sales Report - {profile.get('company_name', uid)} - {date.today()}"
+                        body = "Attached is your cumulative sales report."
+                        send_email_with_attachment(seller_email, subject, body, excel_bytes, f"Report_{date.today()}.xlsx")
+                        results.append(f"Sent to {uid} ({seller_email})")
+                    else:
+                        results.append(f"Skipped {uid}: No email configured")
+                else:
+                    results.append(f"Skipped {uid}: No invoices found")
+            else:
+                results.append(f"Skipped {uid}: Not scheduled time (Current UTC: {current_hour_utc}, Sched UTC: {REPORT_HOUR_UTC})")
 
-        output = io.BytesIO()
-        wb.save(output)
-        output.seek(0)
-        
-        subject = f"Daily Sales Report (All Time) - {date.today()}"
-        body = "Attached is the cumulative sales report generated today."
-        
-        send_email_with_attachment(seller_email, subject, body, output, f"All_Time_Report_{date.today()}.xlsx")
-        return f"Report sent to {seller_email}!"
+        return jsonify({"status": "success", "log": results})
+
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/clients', methods=['GET'])
 @login_required
@@ -864,52 +924,12 @@ def generate_credit_note(bill_no):
 @login_required
 def download_excel_report():
     try:
-        invoices = load_invoices()
-        # REPLACED PANDAS LOGIC WITH OPENPYXL
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Sales Register"
-        
-        ws.append([
-            "Invoice Date", "Bill No", "Client Name", "Client GSTIN", 
-            "Item Name", "HSN", "Qty", "Rate (Incl Tax)", 
-            "GST %", "Taxable Value", "Tax Amount", "Line Total", "Doc Type"
-        ])
-        
-        for inv in invoices:
-            part_list = inv.get('particulars', [])
-            hsn_list = inv.get('hsns', [])
-            qty_list = inv.get('qtys', [])
-            rate_list = inv.get('rates', []) 
-            tax_rate_list = inv.get('taxrates', [])
-            taxable_list = inv.get('amounts', []) 
-            tax_amt_list = inv.get('line_tax_amounts', [])
-            total_list = inv.get('line_total_amounts', [])
-            for i in range(len(part_list)):
-                doc_type = "Tax Invoice"
-                if inv.get('is_credit_note'): doc_type = "Credit Note"
-                elif inv.get('is_non_gst'): doc_type = "Bill of Supply"
-                
-                ws.append([
-                    inv.get('invoice_date'),
-                    inv.get('bill_no'),
-                    inv.get('client_name'),
-                    inv.get('client_gstin'),
-                    part_list[i] if i < len(part_list) else "",
-                    hsn_list[i] if i < len(hsn_list) else "",
-                    float(qty_list[i]) if i < len(qty_list) else 0,
-                    float(rate_list[i]) if i < len(rate_list) else 0,
-                    float(tax_rate_list[i]) if i < len(tax_rate_list) else 0,
-                    float(taxable_list[i]) if i < len(taxable_list) else 0,
-                    float(tax_amt_list[i]) if i < len(tax_amt_list) else 0,
-                    float(total_list[i]) if i < len(total_list) else 0,
-                    doc_type
-                ])
-
-        output = io.BytesIO()
-        wb.save(output)
-        output.seek(0)
-        return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=f'Sales_Report_{date.today()}.xlsx')
+        # Re-use the exact same logic helper for consistency
+        excel_bytes = generate_excel_bytes(session.get('view_mode', current_user.id))
+        if not excel_bytes:
+             return "No invoice data found to generate report.", 404
+             
+        return send_file(excel_bytes, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=f'Sales_Report_{date.today()}.xlsx')
     except Exception as e:
         return f"Error generating report: {str(e)}", 500
 

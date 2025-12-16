@@ -227,6 +227,15 @@
 <script>
 let particularsData = {}; 
 let invoiceListCache = []; 
+let isEditMode = false;
+
+function convertDateForInput(dateStr) {
+    if(!dateStr) return "";
+    const months = {Jan:"01", Feb:"02", Mar:"03", Apr:"04", May:"05", Jun:"06", Jul:"07", Aug:"08", Sep:"09", Oct:"10", Nov:"11", Dec:"12"};
+    const parts = dateStr.split('-'); 
+    if(parts.length < 3) return "";
+    return `${parts[2]}-${months[parts[1]]}-${parts[0]}`;
+}
 
 async function loadClients() {
     try {
@@ -271,7 +280,28 @@ function renderHistoryTable(data) {
         tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-gray-500">No invoices found.</td></tr>';
         return;
     }
+    
+    // CURRENT TIME FOR COMPARISON
+    const now = new Date();
+
     data.forEach(inv => {
+        // --- 24-HOUR EDIT LOGIC ---
+        let showEdit = false;
+        
+        if (inv.timestamp) {
+            // New Invoices with ISO timestamp
+            const created = new Date(inv.timestamp);
+            const diffMs = now - created;
+            const diffHrs = diffMs / (1000 * 60 * 60);
+            if (diffHrs <= 24) showEdit = true;
+        } else {
+            // Fallback for old invoices (Check if date is today)
+            // If the invoice date string matches today's date string, allow edit
+            const todayStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-');
+            if (inv.invoice_date === todayStr) showEdit = true;
+        }
+        // ---------------------------
+
         const row = document.createElement('tr');
         row.className = "border-b hover:bg-gray-50 transition";
         row.innerHTML = `
@@ -281,6 +311,13 @@ function renderHistoryTable(data) {
             <td class="p-3 text-gray-700">${inv.client_name || '-'}</td>
             <td class="p-3 text-right font-medium">₹${inv.grand_total ? inv.grand_total.toFixed(2) : '0.00'}</td>
             <td class="p-3 text-center flex justify-center space-x-3">
+                
+                ${showEdit ? `
+                <button onclick="editInvoice('${inv.bill_no}')" class="text-indigo-600 hover:text-indigo-800" title="Edit Invoice (Available for 24h)">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                </button>
+                ` : ''}
+
                 <button onclick="downloadSingle('${inv.bill_no}')" class="text-blue-600 hover:text-blue-800" title="Download PDF">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                 </button>
@@ -307,6 +344,66 @@ function filterHistory() {
 
 function selectAllHistory(select) {
     document.querySelectorAll('.hist-checkbox').forEach(cb => cb.checked = select);
+}
+
+function editInvoice(billNo) {
+    const inv = invoiceListCache.find(i => i.bill_no === billNo);
+    if (!inv) return alert("Invoice details not found.");
+    if(!confirm("Load invoice " + billNo + " for editing? Unsaved changes will be lost.")) return;
+
+    isEditMode = true;
+    document.getElementById('generateBtn').textContent = "Update Invoice & Regenerate PDF";
+    document.getElementById('generateBtn').classList.remove('from-orange-500', 'to-red-500');
+    document.getElementById('generateBtn').classList.add('from-indigo-500', 'to-purple-500');
+
+    document.getElementById('client_name').value = inv.client_name || '';
+    document.getElementById('client_address1').value = inv.client_address1 || '';
+    document.getElementById('client_address2').value = inv.client_address2 || '';
+    document.getElementById('client_mobile').value = inv.client_mobile || '';
+    document.getElementById('client_email').value = inv.client_email || '';
+    document.getElementById('client_gstin').value = inv.client_gstin || '';
+    
+    document.getElementById('shipto_name').value = inv.shipto_name || '';
+    document.getElementById('shipto_address1').value = inv.shipto_address1 || '';
+    document.getElementById('shipto_address2').value = inv.shipto_address2 || '';
+    document.getElementById('shipto_mobile').value = inv.shipto_mobile || '';
+    document.getElementById('shipto_email').value = inv.shipto_email || '';
+    document.getElementById('shipto_gstin').value = inv.shipto_gstin || '';
+    
+    document.getElementById('po_number').value = inv.po_number || '';
+    
+    document.getElementById('generation_type').value = 'manual';
+    document.getElementById('manual_details').classList.remove('hidden');
+    document.getElementById('manual_bill_no').value = inv.bill_no;
+    document.getElementById('manual_bill_no').readOnly = true; 
+    document.getElementById('manual_bill_no').classList.add('bg-gray-200');
+    
+    document.getElementById('manual_invoice_date').value = convertDateForInput(inv.invoice_date);
+    document.getElementById('is_non_gst').checked = inv.is_non_gst || false;
+
+    const tbody = document.getElementById('itemsBody');
+    tbody.innerHTML = ''; 
+    
+    const count = inv.particulars ? inv.particulars.length : 0;
+    for(let i=0; i<count; i++) {
+        addRow(); 
+        const rows = tbody.querySelectorAll('tr');
+        const row = rows[rows.length - 1]; 
+        
+        row.querySelector('.particularsInput').value = inv.particulars[i];
+        row.querySelector('.hsn').value = inv.hsns ? inv.hsns[i] : '';
+        row.querySelector('.qty').value = inv.qtys ? Math.abs(inv.qtys[i]) : 1;
+        row.querySelector('.rate').value = inv.rates ? Math.abs(inv.rates[i]) : 0;
+        
+        const taxVal = inv.taxrates ? inv.taxrates[i] : 0;
+        row.querySelector('.taxrate').value = taxVal;
+        
+        const qtyInput = row.querySelector('.qty');
+        qtyInput.dispatchEvent(new Event('input')); 
+    }
+
+    calculateTotals();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function downloadSingle(bno) { window.location.href = `/download-invoice/${encodeURIComponent(bno)}`; }
@@ -444,6 +541,13 @@ function calculateTotals() {
 document.getElementById('is_non_gst').addEventListener('change', calculateTotals);
 document.getElementById('client_gstin').addEventListener('input', calculateTotals);
 function resetForm() {
+    isEditMode = false;
+    document.getElementById('manual_bill_no').readOnly = false;
+    document.getElementById('manual_bill_no').classList.remove('bg-gray-200');
+    document.getElementById('generateBtn').textContent = "Generate Invoice PDF";
+    document.getElementById('generateBtn').classList.add('from-orange-500', 'to-red-500');
+    document.getElementById('generateBtn').classList.remove('from-indigo-500', 'to-purple-500');
+
     document.querySelectorAll('input').forEach(i => i.value='');
     document.querySelectorAll('select').forEach(s => s.selectedIndex=0);
     document.getElementById('is_non_gst').checked = false;
@@ -457,6 +561,7 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
     const items = document.querySelectorAll('#itemsBody tr');
     if (items.length === 1 && !items[0].querySelector('.particularsInput').value) return alert('Please add item.');
     const data = {
+        is_edit: isEditMode,
         is_non_gst: document.getElementById('is_non_gst').checked,
         client_name: clientName,
         client_address1: document.getElementById('client_address1').value.trim(),
@@ -488,6 +593,14 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
             const a = document.createElement('a'); a.href = window.URL.createObjectURL(blob);
             a.download = `Invoice_${clientName}_${new Date().getTime()}.pdf`; document.body.appendChild(a); a.click(); a.remove();
             setTimeout(() => { loadOldInvoices(); loadParticulars(); }, 1000);
+            
+            isEditMode = false; 
+            document.getElementById('manual_bill_no').readOnly = false;
+            document.getElementById('manual_bill_no').classList.remove('bg-gray-200');
+            document.getElementById('generateBtn').textContent = "Generate Invoice PDF";
+            document.getElementById('generateBtn').classList.add('from-orange-500', 'to-red-500');
+            document.getElementById('generateBtn').classList.remove('from-indigo-500', 'to-purple-500');
+
             resetForm();
         } else { const err = await res.json(); alert("Error: " + (err.error || "Unknown")); }
     } catch (e) { alert("Network Error."); console.error(e); }

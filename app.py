@@ -86,26 +86,21 @@ class User(UserMixin):
         self.id = id
         self.is_master = is_master
         # payment_active determines if they can access the dashboard.
-        # It is SEPARATE from Flask-Login's is_active property.
         self.payment_active = payment_active
 
     @property
     def is_active(self):
-        # Always return True so Flask-Login allows the session to be created.
-        # We will restrict access using the check_activation middleware instead.
         return True
 
 @login_manager.user_loader
 def load_user(user_id):
     if user_id == MASTER_USERNAME:
-        # Master is always payment active
         return User(user_id, is_master=True, payment_active=True)
     
     try:
         user_doc = db.collection('app_users').document(user_id).get()
         if user_doc.exists:
             data = user_doc.to_dict()
-            # Check the DB 'is_active' flag for payment status
             db_active_status = data.get('is_active', False)
             return User(user_id, is_master=False, payment_active=db_active_status)
     except: pass
@@ -114,14 +109,8 @@ def load_user(user_id):
 # ------------------ ACTIVATION MIDDLEWARE ------------------
 @app.before_request
 def check_activation():
-    """
-    Forces users with payment_active=False to the payment page.
-    Master user is exempt.
-    """
     if current_user.is_authenticated:
-        # If user is NOT master AND NOT payment active
         if not current_user.is_master and not current_user.payment_active:
-            # Allow access only to specific endpoints needed for activation/logout
             if request.endpoint not in ['activation_page', 'logout', 'static', 'check_status_api']:
                 return redirect(url_for('activation_page'))
 
@@ -165,21 +154,17 @@ def compress_image(file_storage, max_width=400):
 
 # ------------------ DATABASE CONTEXT HELPER ------------------
 def get_db_base(target_user=None):
-    # Case 1: Specific Target (For Profile Editing logic)
     if target_user:
         if target_user == MASTER_USERNAME: return db
         return db.collection('users').document(target_user)
 
-    # Case 2: Sub-User (Locked to self)
     if current_user.is_authenticated and not current_user.is_master:
         return db.collection('users').document(current_user.id)
 
-    # Case 3: Master "Viewing As" someone else
     view_mode = session.get('view_mode')
     if current_user.is_authenticated and current_user.is_master and view_mode and view_mode != MASTER_USERNAME:
         return db.collection('users').document(view_mode)
 
-    # Case 4: Master Root
     return db
 
 def get_all_users():
@@ -238,13 +223,11 @@ def save_single_client(name, data):
     base.collection('clients').document(name).set(data, merge=True)
 
 def load_invoices_for_user(target_user_id):
-    """Helper to load invoices for a SPECIFIC user (used for cron)"""
     base = get_db_base(target_user=target_user_id)
     docs = base.collection('invoices').stream()
     return [doc.to_dict() for doc in docs]
 
 def load_invoices():
-    """Context aware loader (uses get_db_base internally)"""
     base = get_db_base()
     docs = base.collection('invoices').stream()
     return [doc.to_dict() for doc in docs]
@@ -284,7 +267,6 @@ def get_next_counter(is_credit_note=False):
     return update_in_transaction(db.transaction(), doc_ref)
 
 def get_all_activation_requests():
-    """Fetch ALL payment history (Pending AND Approved) for Master dashboard."""
     try:
         docs = db.collection('activation_requests').order_by('timestamp', direction=firestore.Query.DESCENDING).stream()
         return [doc.to_dict() for doc in docs]
@@ -502,10 +484,6 @@ def PDF_Generator(invoice_data, is_credit_note=False):
 
 # ------------------ HELPER: GENERATE EXCEL ------------------
 def generate_excel_bytes(user_id):
-    """
-    Generates Excel report for a specific user.
-    Returns: BytesIO object or None if no invoices found.
-    """
     invoices = load_invoices_for_user(user_id)
     if not invoices:
         return None
@@ -570,7 +548,6 @@ def login():
         username = request.form.get("username","")
         password = request.form.get("password","")
         
-        # Validate Credentials First
         valid_creds = False
         is_master = False
         
@@ -585,21 +562,17 @@ def login():
             except: pass
         
         if valid_creds:
-            # 2FA LOGIC
             otp = generate_otp()
             session['temp_user_id'] = username
             session['temp_is_master'] = is_master
             session['otp'] = otp
             
-            # --- EMAIL SENDING LOGIC (UPDATED) ---
-            # 1. Try to fetch Master User Profile Email from DB
             try:
                 master_profile_doc = db.collection('config').document('seller_profile').get()
                 master_email = master_profile_doc.to_dict().get('email')
             except:
                 master_email = None
             
-            # 2. Fallback to sender email if not found
             target_email = master_email if master_email else EMAIL_USER
             
             email_body = f"Login Attempt for user: {username}\nOTP: {otp}\n\nIf this was not you, please check your security."
@@ -618,8 +591,6 @@ def verify_otp():
         user_id = session['temp_user_id']
         is_master = session['temp_is_master']
         
-        # Load user logic must match load_user function to ensure correct session structure
-        # Explicitly check DB for active status for sub-users
         payment_active = True
         if not is_master:
             try:
@@ -627,18 +598,14 @@ def verify_otp():
                 payment_active = u_doc.to_dict().get('is_active', False)
             except: payment_active = False
         
-        # Create User with is_active property implicitly True (handled in class)
         user_obj = User(user_id, is_master=is_master, payment_active=payment_active)
 
-        # Log the user in (Flask-Login will now accept this user because .is_active is True)
         login_user(user_obj)
         
-        # Clear Session
         session.pop('otp', None)
         session.pop('temp_user_id', None)
         session.pop('temp_is_master', None)
         
-        # Redirect will now be intercepted by middleware if payment_active is False
         return redirect(url_for("home"))
     
     return render_template("verify_otp.html", error="Invalid OTP")
@@ -650,7 +617,6 @@ def activation_page():
         amount = request.form.get("amount")
         utr = request.form.get("utr")
         
-        # SAVE ACTIVATION REQUEST TO DB
         req_data = {
             "user_id": current_user.id,
             "amount": amount,
@@ -664,7 +630,6 @@ def activation_page():
         except Exception as e:
             logging.error(f"Error saving request: {e}")
 
-        # Notify Master
         try:
             master_profile_doc = db.collection('config').document('seller_profile').get()
             master_email = master_profile_doc.to_dict().get('email')
@@ -678,11 +643,9 @@ def activation_page():
         flash("Request Sent! Admin will verify and activate your account.", "success")
         return redirect(url_for("activation_page"))
 
-    # Generate QR Code
     upi_str = f"upi://pay?pa={UPI_ID}&pn={UPI_NAME}&cu=INR"
     qr = qrcode.make(upi_str)
     
-    # Save QR to base64
     buf = io.BytesIO()
     qr.save(buf, format="PNG")
     qr_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
@@ -753,7 +716,6 @@ def user_profile():
                  target_is_active = u.to_dict().get('is_active', False)
              except: pass
         
-        # --- NEW: FETCH ALL REQUESTS FOR MASTER ---
         all_requests = []
         if current_user.is_master:
             all_requests = get_all_activation_requests()
@@ -761,15 +723,12 @@ def user_profile():
         return render_template('user_profile.html', profile=profile_data, target_user=target_user, target_is_active=target_is_active, pending_requests=all_requests)
 
     if request.method == 'POST':
-        # VERIFY REQUEST LOGIC
         if 'verify_request' in request.form:
             if not current_user.is_master: return "Unauthorized", 403
             req_id = request.form.get('request_id')
             user_to_activate = request.form.get('user_to_activate')
             
-            # 1. Activate User
             db.collection('app_users').document(user_to_activate).set({"is_active": True}, merge=True)
-            # 2. Mark Request as Approved
             db.collection('activation_requests').document(req_id).update({"status": "Approved"})
             
             flash(f"Payment Verified! User {user_to_activate} is now Active.", "success")
@@ -788,7 +747,6 @@ def user_profile():
             new_u = request.form.get('new_username')
             new_p = request.form.get('new_password')
             if new_u and new_p:
-                # NEW USERS ARE INACTIVE BY DEFAULT
                 db.collection('app_users').document(new_u).set({"password": new_p, "is_active": False})
                 flash(f"User {new_u} created! (Inactive by default)", "success")
             return redirect(url_for('user_profile'))
@@ -837,6 +795,7 @@ def user_profile():
 def handle_invoice():
     try:
         data = request.json or {}
+        is_edit = data.get('is_edit', False)  # Check for edit mode
         is_non_gst = data.get('is_non_gst', False)
         client_name = data.get('client_name','').strip()
         particulars = data.get('particulars', [])
@@ -848,6 +807,28 @@ def handle_invoice():
         taxrates = data.get('taxrates', [])
         hsns = data.get('hsns', [])
         amounts_inclusive = data.get("amounts", [])
+
+        # --- 24-HOUR EDIT CHECK (Backend Security) ---
+        if is_edit:
+            bill_no_to_check = str(data.get("manual_bill_no","")).strip()
+            invoices = load_invoices()
+            existing_inv = next((i for i in invoices if i['bill_no'] == bill_no_to_check), None)
+            
+            if existing_inv:
+                # Check timestamp
+                ts_str = existing_inv.get('timestamp')
+                if ts_str:
+                    try:
+                        created_at = datetime.fromisoformat(ts_str)
+                        if datetime.now() - created_at > timedelta(hours=24):
+                            return jsonify({"error": "Edit window (24 hours) has expired for this invoice."}), 403
+                    except: pass 
+                else:
+                    # Optional: If legacy invoice has no timestamp, assume expired or allow.
+                    # Here we default to allowing ONLY if date is today, else block for safety.
+                    today_str = date.today().strftime('%d-%b-%Y')
+                    if existing_inv.get('invoice_date') != today_str:
+                         return jsonify({"error": "Cannot edit old invoices without timestamp."}), 403
 
         for i, item_name in enumerate(particulars):
             if item_name:
@@ -875,8 +856,13 @@ def handle_invoice():
             invoice_date_str = date.today().strftime('%d-%b-%Y')
         else:
             bill_no = str(data.get("manual_bill_no","")).strip()
-            invoices = load_invoices()
-            if any(inv['bill_no']==bill_no for inv in invoices): return jsonify({"error": "Duplicate Invoice"}), 409
+            
+            # Check for duplicates ONLY if not editing
+            if not is_edit:
+                invoices = load_invoices()
+                if any(inv['bill_no']==bill_no for inv in invoices): 
+                    return jsonify({"error": "Duplicate Invoice"}), 409
+            
             manual_date = data.get("manual_invoice_date","")
             invoice_date_str = datetime.strptime(manual_date, '%Y-%m-%d').strftime('%d-%b-%Y') if manual_date else date.today().strftime('%d-%b-%Y')
         
@@ -910,6 +896,7 @@ def handle_invoice():
         invoice_data = {
             "bill_no": bill_no,
             "invoice_date": invoice_date_str,
+            "timestamp": datetime.now().isoformat(), # SAVE TIMESTAMP FOR 24H EDIT RULE
             "is_non_gst": is_non_gst,
             "client_name": client_name,
             "client_address1": data.get('client_address1'),

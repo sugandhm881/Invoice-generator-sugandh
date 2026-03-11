@@ -1027,8 +1027,9 @@ def handle_invoice():
 
 @app.route('/send-daily-report', methods=['GET'])
 def send_daily_report():
-    token = request.args.get('token', '')
-    if token != os.getenv('CRON_SECRET', 'change-this-cron-token'): return jsonify({"error": "Unauthorized"}), 403
+    auth_header = request.headers.get('Authorization')
+    expected_secret = f"Bearer {os.getenv('CRON_SECRET')}"
+    if auth_header != expected_secret: return jsonify({"error": "Unauthorized"}), 403
     try:
         current_hour_utc = datetime.now(timezone.utc).hour
         users_to_process = get_all_users()

@@ -14,7 +14,7 @@
   ],
   "crons": [
     {
-      "path": "/send-daily-report?token=YOUR_CRON_SECRET_HERE",
+      "path": "/send-daily-report",
       "schedule": "30 16 * * *"
     }
   ]

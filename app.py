@@ -1396,4 +1396,9 @@ def reset_password():
     return redirect(url_for('user_profile', edit_user=target))
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=int(os.getenv("PORT",5000)))
+    # Check if we are running locally in development mode
+    # Set FLASK_ENV=development in your local .env to turn on debugging locally
+    is_dev = os.getenv("FLASK_ENV") == "development"
+    
+    # Run the app securely
+    app.run(debug=is_dev, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))

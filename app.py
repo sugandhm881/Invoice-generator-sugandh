@@ -1305,7 +1305,9 @@ def outstanding_report():
                 parts = inv.get('invoice_date', '').split('-')
                 if len(parts) == 3:
                     m = {'Jan':1,'Feb':2,'Mar':3,'Apr':4,'May':5,'Jun':6,'Jul':7,'Aug':8,'Sep':9,'Oct':10,'Nov':11,'Dec':12}
-                    inv_date = date(int(parts[2]), m.get(parts[1], 1), int(parts[0]))
+                    # Smartly handle both "Mar" and "03"
+                    month_val = m.get(parts[1]) if not parts[1].isdigit() else int(parts[1])
+                    inv_date = date(int(parts[2]), month_val, int(parts[0]))
                     days_overdue = (today - inv_date).days
                 else: days_overdue = 0
             except: days_overdue = 0

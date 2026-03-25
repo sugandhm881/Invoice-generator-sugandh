@@ -232,8 +232,17 @@ def save_seller_profile_data(data, target_user_id=None):
 
 def load_clients():
     tenant = get_tenant_id()
-    res = supabase.table('clients').select('name, data').eq('tenant_id', tenant).execute()
-    return {r['name']: r['data'] for r in res.data}
+    # 1. Tell Supabase to also send back the numeric_id
+    res = supabase.table('clients').select('numeric_id, name, data').eq('tenant_id', tenant).execute()
+    
+    result = {}
+    for r in res.data:
+        client_data = r['data']
+        # 2. Inject the Supabase numeric_id into the dictionary so your frontend can use it
+        client_data['client_id'] = r['numeric_id'] 
+        result[r['name']] = client_data
+        
+    return result
 
 def save_single_client(name, data):
     tenant = get_tenant_id()
@@ -360,6 +369,7 @@ def PDF_Generator(invoice_data, is_credit_note=False, is_debit_note=False):
     invoice_type = invoice_data.get('invoice_type', profile.get('invoice_type', 'goods'))
     is_service = (invoice_type == 'service')
     
+    # --- REPLACE LOGO BLOCK WITH THIS ---
     logo_data = profile.get('logo_base64')
     if logo_data:
         try:
@@ -372,8 +382,7 @@ def PDF_Generator(invoice_data, is_credit_note=False, is_debit_note=False):
             pdf.image(tmp_path, x=15, y=8, w=30)
             os.unlink(tmp_path)
         except Exception:
-            if os.path.exists(DEFAULT_LOGO): pdf.image(DEFAULT_LOGO, x=15, y=8, w=30)
-    elif os.path.exists(DEFAULT_LOGO): pdf.image(DEFAULT_LOGO, x=15, y=8, w=30)
+            pass
     
     pdf.set_font("Calibri", "B", 22)
     is_non_gst = invoice_data.get('is_non_gst', False)
@@ -466,12 +475,16 @@ def PDF_Generator(invoice_data, is_credit_note=False, is_debit_note=False):
     
     rate_col_label = "Rate (Excl.)" if is_service else "Rate (Incl.)"
     p_w, h_w, q_w, r_w, d_w, tp_w, ta_w, tm_w, t_w = 46, 15, 12, 18, 12, 12, 22, 18, 25
+    if is_service:
+        p_w += q_w  # Give Qty width to Particulars
+        q_w = 0     # Set Qty width to 0
+        
     pdf.set_fill_color(200, 220, 255) if doc_category == 'purchase' else pdf.set_fill_color(255, 204, 153)
 
     pdf.set_font("Calibri", "B", 9)
     pdf.cell(p_w, 8, "Particulars", 1, 0, 'L', True)
     pdf.cell(h_w, 8, "HSN", 1, 0, 'C', True)
-    pdf.cell(q_w, 8, "Qty", 1, 0, 'C', True)
+    if not is_service: pdf.cell(q_w, 8, "Qty", 1, 0, 'C', True)
     pdf.cell(r_w, 8, rate_col_label, 1, 0, 'R', True)
     pdf.cell(d_w, 8, "Disc%", 1, 0, 'R', True) 
     pdf.cell(tp_w, 8, "Tax %", 1, 0, 'R', True)
@@ -486,10 +499,32 @@ def PDF_Generator(invoice_data, is_credit_note=False, is_debit_note=False):
     total_qty_calc = 0
     for i in range(len(particulars)):
         start_y, start_x = pdf.get_y(), pdf.get_x()
-        pdf.multi_cell(p_w, 7, str(particulars[i]), 0, 'L')
+        
+        # --- TALLY INVOICE FORMATTING ---
+        part_str = str(particulars[i])
+        if '\n' in part_str:
+            parts = part_str.split('\n', 1)
+            # Main Particular: Bold, Size 9
+            pdf.set_font("Calibri", "B", 9)
+            pdf.multi_cell(p_w, 5, parts[0], 0, 'L')
+            
+            # Sub Particular: Regular, Size 8, Dark Gray
+            pdf.set_x(start_x)
+            pdf.set_font("Calibri", "", 8)
+            pdf.set_text_color(80, 80, 80)
+            pdf.multi_cell(p_w, 4, parts[1], 0, 'L')
+            pdf.set_text_color(0, 0, 0) # Reset color to black
+        else:
+            # Main Particular only: Bold, Size 9
+            pdf.set_font("Calibri", "B", 9)
+            pdf.multi_cell(p_w, 7, part_str, 0, 'L')
+            
         y_after = pdf.get_y()
-        row_h = y_after - start_y
+        row_h = max(y_after - start_y, 7) # Ensure minimum row height
+        
+        pdf.set_font("Calibri", "", 9) # Reset font for the rest of the columns
         pdf.set_xy(start_x + p_w, start_y)
+        # --------------------------------
         
         q_val = float(qtys[i]) if i < len(qtys) else 0
         total_qty_calc += abs(q_val)
@@ -500,7 +535,7 @@ def PDF_Generator(invoice_data, is_credit_note=False, is_debit_note=False):
         except: ds_str = "-"
 
         pdf.cell(h_w, row_h, "" if is_non_gst else str(hsns[i] if i<len(hsns) else ''), 1, 0, 'C')
-        pdf.cell(q_w, row_h, q_str, 1, 0, 'C') 
+        if not is_service: pdf.cell(q_w, row_h, q_str, 1, 0, 'C') 
         pdf.cell(r_w, row_h, f"{abs(float(rates[i])):.2f}", 1, 0, 'R')
         pdf.cell(d_w, row_h, ds_str, 1, 0, 'R') 
         pdf.cell(tp_w, row_h, tx_str, 1, 0, 'R')
@@ -510,11 +545,14 @@ def PDF_Generator(invoice_data, is_credit_note=False, is_debit_note=False):
         pdf.rect(start_x, start_y, p_w, row_h)
         pdf.set_y(y_after)
 
-    pdf.set_font("Calibri", "B", 9)
-    pdf.set_fill_color(240, 240, 240)
-    pdf.cell(p_w + h_w, 7, "Total Quantity:", 1, 0, 'R', True)
-    pdf.cell(q_w, 7, f"{total_qty_calc:g}", 1, 0, 'C', True)
-    pdf.cell(page_width - (p_w + h_w + q_w), 7, "", 1, 1, 'R', True)
+    if not is_service:
+        pdf.set_font("Calibri", "B", 9)
+        pdf.set_fill_color(240, 240, 240)
+        pdf.cell(p_w + h_w, 7, "Total Quantity:", 1, 0, 'R', True)
+        pdf.cell(q_w, 7, f"{total_qty_calc:g}", 1, 0, 'C', True)
+        pdf.cell(page_width - (p_w + h_w + q_w), 7, "", 1, 1, 'R', True)
+    else:
+        pdf.ln(2) # Small spacing instead of the Total Qty row
     
     pdf.set_fill_color(230, 230, 230)
     def add_total(label, val):
@@ -554,6 +592,7 @@ def PDF_Generator(invoice_data, is_credit_note=False, is_debit_note=False):
     pdf.set_font("Calibri", "B", 10)
     pdf.cell(0, 5, f"For {profile.get('company_name', 'Sahayak ERP')}", ln=True, align='R')
 
+    # --- REPLACE SIGNATURE BLOCK WITH THIS ---
     sig_data = profile.get('signature_base64')
     if sig_data:
         try:
@@ -564,10 +603,7 @@ def PDF_Generator(invoice_data, is_credit_note=False, is_debit_note=False):
             pdf.image(tmp_path, x=pdf.w - margin - 40, y=pdf.get_y(), w=40)
             os.unlink(tmp_path)
         except Exception:
-            if os.path.exists(DEFAULT_SIGNATURE): pdf.image(DEFAULT_SIGNATURE, x=pdf.w-margin-40, y=pdf.get_y(), w=40)
-    elif os.path.exists(DEFAULT_SIGNATURE):
-        pdf.image(DEFAULT_SIGNATURE, x=pdf.w-margin-40, y=pdf.get_y(), w=40) 
-    
+            pass 
     return io.BytesIO(pdf.output(dest="S").encode("latin-1"))
 
 def generate_excel_bytes(user_id):
@@ -872,11 +908,26 @@ def handle_invoice():
         is_debit_note, is_credit_note = (doc_type == 'dn'), (doc_type == 'cn')
         
         client_name = data.get('client_name','').strip()
+        client_email = data.get('client_email', '').strip()
+        client_mobile = data.get('client_mobile', '').strip()
+        
+        # --- STRICT DUPLICATION CHECK (CLIENTS) ---
+        if client_name and not is_edit:
+            existing_clients = load_clients()
+            # If they are typing a brand new client name...
+            if client_name not in existing_clients:
+                for ext_name, ext_data in existing_clients.items():
+                    # Check if the email or mobile is already linked to someone else
+                    if client_email and ext_data.get('email') == client_email:
+                        return jsonify({"error": f"Email '{client_email}' is already registered to '{ext_name}'."}), 409
+                    if client_mobile and ext_data.get('mobile') == client_mobile:
+                        return jsonify({"error": f"Mobile '{client_mobile}' is already registered to '{ext_name}'."}), 409
+
         client_details = {
             "address1": data.get('client_address1'), "address2": data.get('client_address2'),
             "pincode": data.get('client_pincode'), "district": data.get('client_district'),
             "state": data.get('client_state'), "gstin": data.get('client_gstin'),
-            "email": data.get('client_email'), "mobile": data.get('client_mobile')
+            "email": client_email, "mobile": client_mobile
         }
         
         particulars = data.get('particulars', [])
@@ -896,9 +947,24 @@ def handle_invoice():
                         return jsonify({"error": "Edit window (24 hours) expired."}), 403
                 except: pass 
 
+        # --- SMART CASE-INSENSITIVE MERGING FOR ITEMS ---
+        existing_particulars = load_particulars()
+        # Create a map of lowercase names pointing to their actual saved names
+        particulars_lower_map = {k.lower(): k for k in existing_particulars.keys()}
+
         for i, item_name in enumerate(particulars):
             if item_name:
-                save_single_particular(f"{item_name}_NONGST" if is_non_gst else item_name, {
+                main_item_name = item_name.split('\n')[0].strip()
+                base_name = f"{main_item_name}_NONGST" if is_non_gst else main_item_name
+                
+                # If a match exists (regardless of caps), use the existing exact name!
+                if base_name.lower() in particulars_lower_map:
+                    final_save_name = particulars_lower_map[base_name.lower()]
+                else:
+                    final_save_name = base_name
+                    particulars_lower_map[base_name.lower()] = final_save_name # Map it for the next loop
+
+                save_single_particular(final_save_name, {
                     "hsn": "" if is_non_gst else (hsns[i] if i<len(hsns) else ""),
                     "rate": rates[i] if i<len(rates) else 0,
                     "taxrate": 0 if is_non_gst else (taxrates[i] if i<len(taxrates) else 0)
@@ -906,7 +972,8 @@ def handle_invoice():
 
         if client_name: save_single_client(client_name, client_details)
 
-        if data.get("auto_generate", True):
+        # --- REPLACE FROM HERE ---
+        if data.get("auto_generate", True) and not is_edit:
             prefix = get_seller_profile_data().get('invoice_prefix', 'TE').upper()
             if doc_category == 'purchase':
                 if doc_type == 'po': bill_no = f"{prefix}-PO/25-26/{get_next_counter(is_purchase=True, doc_type='po'):04d}"
@@ -919,17 +986,26 @@ def handle_invoice():
                 else: bill_no = f"{prefix}/25-26/{get_next_counter(is_credit_note=False):04d}"
             invoice_date_str = date.today().strftime('%d-%b-%Y')
         else:
-            bill_no = str(data.get("manual_bill_no","")).strip()
+            bill_no = str(data.get("manual_bill_no") or data.get("bill_no", "")).strip()
+            
             if not is_edit:
                 c_name = 'purchase_bills' if doc_category == 'purchase' else 'sales_invoices'
                 chk = supabase.table('documents').select('bill_no').eq('tenant_id', get_tenant_id()).eq('collection_name', c_name).eq('bill_no', bill_no.replace('/','_')).execute()
-                if chk.data: return jsonify({"error": "Duplicate Invoice No"}), 409
+                if chk.data: 
+                    return jsonify({"error": f"Document Number '{bill_no}' already exists! Please use a unique number."}), 409
 
-            manual_date = data.get("manual_invoice_date","")
+            
+            manual_date = data.get("manual_invoice_date") or data.get("invoice_date", "")
             if manual_date:
-                try: invoice_date_str = datetime.strptime(manual_date, '%Y-%m-%d').strftime('%d-%b-%Y')
-                except: invoice_date_str = date.today().strftime('%d-%b-%Y')
-            else: invoice_date_str = date.today().strftime('%d-%b-%Y')
+                try: 
+                    invoice_date_str = datetime.strptime(manual_date, '%Y-%m-%d').strftime('%d-%b-%Y')
+                except ValueError:
+                    try:
+                        invoice_date_str = datetime.strptime(manual_date, '%d-%b-%Y').strftime('%d-%b-%Y')
+                    except ValueError:
+                        invoice_date_str = date.today().strftime('%d-%b-%Y')
+            else: 
+                invoice_date_str = date.today().strftime('%d-%b-%Y')
         
         prof = get_seller_profile_data()
         my_state_code = prof.get('gstin', '')[:2] if len(prof.get('gstin', '')) >= 2 else None
